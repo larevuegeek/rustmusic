@@ -1,0 +1,265 @@
+<script lang="ts">
+import "../app.css";
+import "$lib/icons/preload";
+import Sidebar from "$lib/components/sidebar/Sidebar.svelte";
+import SwitchTheme from "$lib/components/ui/input/SwitchTheme.svelte";
+import Player from "$lib/components/player/Player.svelte";
+import QueuePanel from "$lib/components/queue/QueuePanel.svelte";
+import Icon from "@iconify/svelte";
+import SearchAutocomplete from "$lib/components/search/SearchAutocomplete.svelte";
+import Toast from "$lib/components/ui/toast/Toast.svelte";
+import { onMount } from "svelte";
+import { get } from "svelte/store";
+import { invoke } from "@tauri-apps/api/core";
+import { profilSelector } from "$lib/stores/profil/profil.store";
+import { player } from "$lib/stores/player/player.store";
+import ProfilSelectorInput from "$lib/components/header/ProfilSelectorInput.svelte"
+import ProfilSelectorPopin from "$lib/components/header/ProfilSelectorPopin.svelte";
+import Titlebar from "$lib/components/ui/titlebar/Titlebar.svelte";
+import Popin from "$lib/components/ui/popin/Popin.svelte";
+import { libraryStore } from "$lib/stores/library/library.store";
+import LoaderApp from "$lib/components/ui/loader/LoaderApp.svelte";
+import { queueState } from "$lib/stores/queue/queueState.store";
+import { playerService } from "$lib/services/player/player.service";
+import { importProgressStore } from "$lib/stores/library/importProgress.store";
+import { settingsStore } from "$lib/stores/settings/settings.store";
+import { sidebarStore } from "$lib/stores/ui/sidebar.store";
+import { taskProgressStore } from "$lib/stores/ui/taskProgress.store";
+import { artistImageReadyStore } from "$lib/stores/library/artistImageReady.store";
+import { refreshDlnaStatus } from "$lib/stores/dlna/dlna.store";
+import { initPlaybackPipelineListener } from "$lib/stores/player/playbackPipeline.store";
+import { trackNotificationService } from "$lib/services/notification/trackNotification.service";
+import { mediaControlsService } from "$lib/services/mediaControls/mediaControls.service";
+import { onDestroy } from "svelte";
+import { page } from "$app/state";
+import SelectionBar from "$lib/components/ui/selection/SelectionBar.svelte";
+import { fade } from "svelte/transition";
+
+onMount(async () => {
+  await profilSelector.init();
+  await libraryStore.init();
+  await queueState.init();
+  playerService.init();
+  importProgressStore.init();
+  taskProgressStore.init();
+  artistImageReadyStore.init();
+  await settingsStore.init();
+
+  // Refresh DLNA status (server may have auto-started in Rust setup)
+  refreshDlnaStatus();
+
+  // Subscribe to the backend playback-pipeline event so the player status
+  // bar can show "source → output" when a conversion happens.
+  initPlaybackPipelineListener();
+
+  // Notif OS sur changement de morceau (cover + titre + artiste).
+  // Skip la 1re émission (restore de la queue au démarrage).
+  trackNotificationService.init();
+
+  // SMTC / MPRIS / Now Playing — intégration aux contrôles média OS.
+  // sync() lit le réglage `system_media_controls` et active/désactive en
+  // conséquence. Appel après settingsStore.init() ci-dessus pour avoir la
+  // valeur persistée. Erreurs silencieuses (logged) pour ne pas bloquer
+  // le démarrage si l'OS refuse (Linux sans D-Bus, etc.).
+  mediaControlsService.sync().catch((e) => console.warn('[smtc] sync init failed:', e));
+
+  // Le `playback-preparing` event est désormais écouté par taskProgressStore
+  // (déjà init plus haut), pas besoin d'un listener dédié.
+
+  // Scan automatique au démarrage si activé
+  if (settingsStore.get('scan_on_startup') === 'true') {
+    const lib = get(libraryStore).librarySelected;
+    if (lib?.id) {
+      invoke('rescan_library', { libraryId: lib.id }).catch(e =>
+        console.warn('[startup] Scan auto échoué:', e)
+      );
+    }
+  }
+
+  // Auto-update désactivé tant que rustmusic.dev n'est pas en ligne
+  // Décommenter quand le site est déployé :
+  // import('@tauri-apps/plugin-updater').then(({ check }) => {
+  //   check().then(update => {
+  //     if (update) console.log(`[updater] v${update.version} disponible`);
+  //   }).catch(() => {});
+  // }).catch(() => {});
+});
+
+onDestroy(() => {
+  playerService.destroy();
+  importProgressStore.destroy();
+  taskProgressStore.destroy();
+  trackNotificationService.destroy();
+  mediaControlsService.disable().catch(() => {});
+});
+
+function goBack() { history.back(); }
+function goForward() { history.forward(); }
+
+// Raccourcis clavier globaux
+function handleKeydown(e: KeyboardEvent) {
+  // Ignorer si on est dans un input/textarea
+  const tag = (e.target as HTMLElement)?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+  switch (e.code) {
+    case 'Space':
+      e.preventDefault();
+      playerService.handleTogglePlay();
+      break;
+    case 'ArrowRight':
+      if (e.ctrlKey || e.metaKey) {
+        playerService.nextTrack();
+      } else {
+        playerService.seekTo((get(player).jsPosition ?? 0) + 10);
+      }
+      break;
+    case 'ArrowLeft':
+      if (e.ctrlKey || e.metaKey) {
+        playerService.prevTrack();
+      } else {
+        playerService.seekTo(Math.max(0, (get(player).jsPosition ?? 0) - 10));
+      }
+      break;
+    case 'ArrowUp':
+      e.preventDefault();
+      invoke<number>('get_volume').then(v => invoke('set_volume', { volume: Math.min(100, v + 5) }));
+      break;
+    case 'ArrowDown':
+      e.preventDefault();
+      invoke<number>('get_volume').then(v => invoke('set_volume', { volume: Math.max(0, v - 5) }));
+      break;
+    case 'KeyM':
+      invoke('mute');
+      break;
+    case 'KeyF':
+    case 'KeyK':
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const searchInput = document.querySelector('input[type="search"]') as HTMLInputElement;
+        searchInput?.focus();
+      }
+      break;
+  }
+}
+</script>
+
+<svelte:window onkeydown={handleKeydown} />
+
+
+{#if !$profilSelector.initialized}
+  <LoaderApp />
+{:else}
+<main class="w-screen h-screen flex flex-col bg-gray-50/50 dark:bg-zinc-950 text-gray-900 dark:text-gray-100 overflow-hidden">
+  <Titlebar />
+  <div class="flex grow overflow-hidden relative">
+
+    <!-- ═══ SIDEBAR : fixe sur desktop, overlay sur mobile ═══ -->
+
+    <!-- Backdrop mobile (ferme la sidebar au clic) -->
+    {#if $sidebarStore.open}
+      <button
+        type="button"
+        class="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm cursor-default
+               md:hidden"
+        onclick={() => sidebarStore.close()}
+        aria-label="Fermer le menu"
+      ></button>
+    {/if}
+
+    <!-- Sidebar -->
+    <div class="
+      fixed md:relative z-40 md:z-auto
+      h-full
+      transition-transform duration-300 ease-out
+      {$sidebarStore.open ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+    ">
+      <Sidebar />
+    </div>
+
+    <!-- ═══ CONTENU PRINCIPAL ═══ -->
+    <div class="grow overflow-hidden flex flex-col min-w-0">
+      <header class="p-3 md:p-5 shrink-0">
+        <div class="flex items-center justify-between gap-2 md:gap-4">
+          <div class="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
+
+            <!-- Burger menu (mobile) -->
+            <button
+              onclick={() => sidebarStore.toggle()}
+              class="flex md:hidden items-center justify-center h-10 w-10 rounded-full
+                     backdrop-blur-md transition cursor-pointer
+                     dark:bg-neutral-900/60 dark:border dark:border-white/10
+                     bg-white/70 border border-black/10
+                     hover:bg-white/85"
+              aria-label="Menu"
+            >
+              <Icon icon={$sidebarStore.open ? "lucide:x" : "lucide:menu"} class="h-5 w-5 dark:text-white/80 text-black/80" />
+            </button>
+
+            <!-- Boutons navigation -->
+            <div class="hidden sm:flex items-center gap-2">
+              <button
+                onclick={goBack}
+                class="flex items-center justify-center h-10 w-10 rounded-full
+                      backdrop-blur-md transition
+                      shadow-sm shadow-black/8
+                      dark:shadow-[0_10px_30px_-18px_rgba(0,0,0,0.75)]
+                      dark:bg-neutral-900/60 dark:border dark:border-white/10
+                      dark:hover:bg-neutral-900/80 dark:hover:border-white/20
+                      bg-white border border-neutral-200/90
+                      hover:bg-neutral-50 hover:border-neutral-300/90 cursor-pointer"
+                aria-label="Retour"
+              >
+                <Icon icon="heroicons:chevron-left" class="h-5 w-5 dark:text-white/80 text-neutral-700" />
+              </button>
+
+              <button
+                onclick={goForward}
+                class="flex items-center justify-center h-10 w-10 rounded-full
+                      backdrop-blur-md transition
+                      shadow-sm shadow-black/8
+                      dark:shadow-[0_10px_30px_-18px_rgba(0,0,0,0.75)]
+                      dark:bg-neutral-900/60 dark:border dark:border-white/10
+                      dark:hover:bg-neutral-900/80 dark:hover:border-white/20
+                      bg-white border border-neutral-200/90
+                      hover:bg-neutral-50 hover:border-neutral-300/90 cursor-pointer"
+                aria-label="Suivant"
+              >
+                <Icon icon="heroicons:chevron-right" class="h-5 w-5 dark:text-white/80 text-neutral-700" />
+              </button>
+            </div>
+
+            <!-- Search bar + Actions -->
+            <div class="grow flex items-center justify-between gap-2 md:gap-4">
+              <div style="width: min(420px, 100%);">
+                <SearchAutocomplete />
+              </div>
+
+              <div class="shrink-0 flex items-center gap-1 md:gap-2">
+                <SwitchTheme />
+                <ProfilSelectorInput />
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- Contenu scrollable avec transition -->
+      <div class="flex-1 overflow-hidden">
+        {#key page.url.pathname}
+          <div class="h-full" in:fade={{ duration: 120, delay: 60 }}>
+            <slot />
+          </div>
+        {/key}
+      </div>
+    </div>
+  </div>
+
+  <Player />
+  <QueuePanel />
+  <SelectionBar />
+  <Toast />
+  <Popin />
+  <ProfilSelectorPopin />
+</main>
+{/if}

@@ -1,0 +1,71 @@
+<script lang="ts">
+import type { AlbumListView } from "$lib/types/ui/library/album/AlbumListView";
+import CollectionContextMenu from "$lib/components/ui/contextmenu/CollectionContextMenu.svelte";
+import Icon from "@iconify/svelte";
+import { invoke } from "@tauri-apps/api/core";
+import CoverImg from "$lib/components/ui/image/CoverImg.svelte";
+
+let { libraryId, album }: { libraryId: number; album: AlbumListView } = $props();
+
+let contextMenu = $state<{ x: number; y: number } | null>(null);
+
+async function loadAlbumTracks() {
+    return await invoke('get_tracks_by_album', { libraryId, libraryAlbumId: album.id }) as any[];
+}
+</script>
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<a
+    class="group flex items-center gap-4 px-3 py-2.5 rounded-xl cursor-pointer
+           hover:bg-neutral-50 dark:hover:bg-white/4 transition-colors duration-100"
+    href={`/library/${libraryId}/albums/${album.id}`}
+    oncontextmenu={(e) => { e.preventDefault(); contextMenu = { x: e.clientX, y: e.clientY }; }}
+>
+    <!-- Cover -->
+    <div class="w-12 h-12 rounded-lg overflow-hidden shrink-0
+                bg-neutral-200 dark:bg-neutral-800 shadow-sm">
+        {#if album.cover_url}
+            <CoverImg path={album.cover_url} alt={album.title} size="1x"
+                 class="w-full h-full object-cover" />
+        {:else}
+            <div class="w-full h-full flex items-center justify-center">
+                <Icon icon="lucide:disc-album" width={18} class="text-neutral-400" />
+            </div>
+        {/if}
+    </div>
+
+    <!-- Infos -->
+    <div class="flex-1 min-w-0">
+        <p class="text-sm font-medium text-neutral-800 dark:text-neutral-200 truncate">
+            {album.title}
+        </p>
+        <p class="text-xs text-neutral-500 dark:text-neutral-400 truncate">
+            {album.artist ?? "Artiste inconnu"}
+            {#if album.year} • {album.year}{/if}
+        </p>
+    </div>
+
+    <!-- Stats -->
+    <div class="hidden sm:flex items-center gap-4 text-[11px] text-neutral-400 shrink-0">
+        <span>{album.total_tracks} titre{album.total_tracks !== 1 ? 's' : ''}</span>
+        <span class="uppercase">{album.album_type}</span>
+    </div>
+
+    <!-- Chevron -->
+    <Icon icon="lucide:chevron-right" width="14"
+          class="text-neutral-300 dark:text-neutral-600
+                 group-hover:text-neutral-500 transition-colors shrink-0" />
+</a>
+
+{#if contextMenu}
+    <CollectionContextMenu
+        title={album.title}
+        type="album"
+        loadTracks={loadAlbumTracks}
+        x={contextMenu.x}
+        y={contextMenu.y}
+        onclose={() => contextMenu = null}
+        albumId={album.id}
+        artistName={album.artist}
+    />
+{/if}

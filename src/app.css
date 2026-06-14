@@ -1,0 +1,223 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+@theme {
+  --font-sans: 'Inter Variable', system-ui, sans-serif;
+}
+
+html {
+  font-family: 'Inter Variable', system-ui, sans-serif;
+}
+
+/* Hide scrollbar but keep scroll */
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* Hero album background tokens — adapts light/dark */
+:root {
+  --hero-bg-hex: #f9fafb;
+  --hero-overlay-rgb: 249, 250, 251;
+}
+.dark {
+  --hero-bg-hex: #09090b;
+  --hero-overlay-rgb: 9, 9, 11;
+}
+
+/* KarbonJS design tokens (dark theme) */
+:root {
+  --karbon-bg-card: #0a0a0a;
+  --karbon-bg-input: rgba(255, 255, 255, 0.06);
+  --karbon-text: rgba(255, 255, 255, 0.90);
+  --karbon-text-2: rgba(255, 255, 255, 0.50);
+  --karbon-text-3: rgba(255, 255, 255, 0.30);
+  --karbon-text-4: rgba(255, 255, 255, 0.18);
+  --karbon-border: rgba(255, 255, 255, 0.08);
+  --karbon-border-input: rgba(255, 255, 255, 0.10);
+  --karbon-border-input-focus: rgba(239, 68, 68, 0.5);
+  --karbon-nav-hover-bg: rgba(255, 255, 255, 0.05);
+  --karbon-red-400: #f87171;
+  --karbon-red-500: #ef4444;
+  --karbon-red-600: #dc2626;
+  --karbon-blue-400: #60a5fa;
+  --karbon-blue-500: #3b82f6;
+  --karbon-blue-600: #2563eb;
+  --karbon-amber-400: #fbbf24;
+  --karbon-amber-500: #f59e0b;
+  --karbon-amber-600: #d97706;
+  --karbon-emerald-400: #34d399;
+  --karbon-emerald-500: #10b981;
+  --karbon-emerald-600: #059669;
+}
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Light-mode design tokens */
+:root {
+  --light-bg-sidebar: #f8f8fa;
+  --light-border: rgba(0, 0, 0, 0.10);
+  --light-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --light-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.06);
+  --light-inset-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* scrollbars "app" */
+.scrollbar-app {
+  scrollbar-width: thin;                 /* Firefox */
+  scrollbar-color: rgba(255,255,255,.18) transparent;
+}
+
+.scrollbar-app::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.scrollbar-app::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-app::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,.18);
+  border-radius: 999px;
+  border: 3px solid transparent;         /* crée un "gap" */
+  background-clip: content-box;
+}
+
+.dark .scrollbar-app::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,.18);
+  background-clip: content-box;
+}
+
+.scrollbar-app::-webkit-scrollbar-thumb:hover {
+  background: rgba(0,0,0,.28);
+  background-clip: content-box;
+}
+
+.dark .scrollbar-app::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,.28);
+  background-clip: content-box;
+}
+
+.eq {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 14px;
+  width: 18px;
+}
+
+.eq i {
+  display: block;
+  width: 3px;
+  height: 4px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.9;
+  animation: eq-bounce 0.9s ease-in-out infinite;
+}
+
+.eq i:nth-child(1) { animation-delay: 0s; }
+.eq i:nth-child(2) { animation-delay: 0.12s; }
+.eq i:nth-child(3) { animation-delay: 0.24s; }
+.eq i:nth-child(4) { animation-delay: 0.36s; }
+
+@keyframes eq-bounce {
+  0%, 100% { height: 4px; opacity: 0.55; }
+  50% { height: 14px; opacity: 1; }
+}
+
+/* Scrollbar invisible par défaut, visible au hover */
+.smart-scroll {
+  overflow-y: auto;
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: transparent transparent; /* Firefox */
+  transition: scrollbar-color 0.3s;
+}
+
+.smart-scroll:hover {
+  scrollbar-color: rgb(163 163 163 / 0.3) transparent; /* Firefox */
+}
+
+/* Webkit (Chrome, Safari, Edge) */
+.smart-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.smart-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.smart-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+  transition: background 0.3s;
+}
+
+.smart-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgb(163 163 163 / 0.3);
+}
+
+.smart-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(163 163 163 / 0.5);
+}
+
+/* Dark mode */
+.dark .smart-scroll:hover {
+  scrollbar-color: rgb(82 82 82 / 0.5) transparent;
+}
+
+.dark .smart-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgb(82 82 82 / 0.5);
+}
+
+.dark .smart-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(82 82 82 / 0.7);
+}
+
+@keyframes eq-bar-1 {
+  0%, 100% { height: 4px; }
+  50% { height: 18px; }
+}
+@keyframes eq-bar-2 {
+  0%, 100% { height: 14px; }
+  50% { height: 5px; }
+}
+@keyframes eq-bar-3 {
+  0%, 100% { height: 8px; }
+  50% { height: 16px; }
+}
+
+/* ─────────────────────────────────────────────
+   Lyrics — karaoké style Apple Music
+   ───────────────────────────────────────────── */
+.lyric-line {
+  color: rgba(255, 255, 255, 0.55);
+  text-shadow: 0 2px 30px rgba(0, 0, 0, 0.4);
+  transform: scale(0.97);
+  will-change: color, transform, opacity;
+}
+.lyric-active {
+  color: rgb(255, 255, 255) !important;
+  text-shadow:
+    0 0 20px rgba(255, 255, 255, 0.5),
+    0 4px 30px rgba(0, 0, 0, 0.6) !important;
+  transform: scale(1) !important;
+}
+.lyric-past {
+  color: rgba(255, 255, 255, 0.22) !important;
+  filter: blur(0.6px);
+  transform: scale(0.93) !important;
+}
+.lyric-future {
+  color: rgba(255, 255, 255, 0.55) !important;
+  transform: scale(0.97) !important;
+}

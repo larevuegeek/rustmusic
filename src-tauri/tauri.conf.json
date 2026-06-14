@@ -1,0 +1,83 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "RustMusic",
+  "mainBinaryName": "RustMusic",
+  "version": "0.1.7",
+  "identifier": "com.larevuegeek.rustmusic",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../build"
+  },
+ "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "category": "Music",
+    "copyright": "",
+    "targets": "all",
+    "externalBin": [],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    },
+    "longDescription": "",
+    "macOS": {
+      "entitlements": null,
+      "exceptionDomain": "",
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null,
+      "minimumSystemVersion": "10.15"
+    },
+    "resources": [],
+    "shortDescription": "",
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://rustmusic.dev/api/releases/{{target}}/{{current_version}}"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNCMjkwQTVCMDM0MzY0OTYKUldTV1pFTURXd29wTzQ1bkJ1UEFKQVZhbjlzRU5NUElSUUlCOTFHNGQ2UnNlRTlqNE9vY2d4NlYK"
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "fullscreen": false,
+        "height": 900,
+        "resizable": true,
+        "title": "RustMusic",
+        "width": 1280,
+        "decorations": false
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self' http://localhost https://localhost ipc: tauri:",
+        "img-src": "'self' asset: http://asset.localhost https://asset.localhost blob: data:",
+        "connect-src": "'self' ipc: tauri: http://ipc.localhost https://ipc.localhost http://localhost https://localhost"
+      },
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/**",
+          "$HOME/**"
+        ]
+      }
+    }
+  }
+}

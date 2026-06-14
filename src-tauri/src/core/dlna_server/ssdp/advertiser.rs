@@ -1,0 +1,109 @@
+//! SSDP Advertiser : sends periodic `NOTIFY ssdp:alive` multicast messages
+//! so DLNA clients on the LAN keep us in their device list, and a
+//! `NOTIFY ssdp:byebye` on shutdown so clients drop us cleanly.
+//!
+//! Spec : UPnP Device Architecture 1.0, section 1.2.
+//! Group address : `239.255.255.250:1900` (IPv4).
+
+use std::net::{Ipv4Addr, SocketAddr, IpAddr};
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::net::UdpSocket;
+use tokio::sync::broadcast;
+
+use crate::core::dlna_server::config::DlnaConfig;
+use crate::core::dlna_server::error::DlnaError;
+use crate::core::dlna_server::ssdp::listener::build_usns;
+
+const MULTICAST_TARGET: &str = "239.255.255.250:1900";
+
+/// Re-announce period. Must be < CACHE-CONTROL max-age (1800s).
+/// We pick 60s during development for quicker discovery feedback.
+const ALIVE_INTERVAL_SECS: u64 = 60;
+
+/// Spawn the advertiser loop. Runs until `shutdown` fires, then sends byebye.
+pub async fn run_advertiser(
+    config: Arc<DlnaConfig>,
+    local_ip: Ipv4Addr,
+    mut shutdown: broadcast::Receiver<()>,
+) -> Result<(), DlnaError> {
+    // Bind on the specific LAN interface (not 0.0.0.0) so multicast packets
+    // exit on the correct adapter — important on Windows where the default
+    // route may go through a VPN or virtual adapter. Binding on local_ip
+    // implicitly sets the multicast send interface to that adapter.
+    let std_sock = std::net::UdpSocket::bind(SocketAddr::new(IpAddr::V4(local_ip), 0))
+        .map_err(DlnaError::Io)?;
+    std_sock.set_nonblocking(true).map_err(DlnaError::Io)?;
+    // Bump multicast TTL to 4 (default is 1) so packets traverse a few hops
+    // if routers/switches reduce TTL on the way.
+    if let Err(e) = std_sock.set_multicast_ttl_v4(4) {
+        log::warn!("set_multicast_ttl_v4 failed: {}", e);
+    }
+    let socket = UdpSocket::from_std(std_sock).map_err(DlnaError::Io)?;
+
+    let location = format!("http://{}:{}/description.xml", local_ip, config.port);
+    let usns = build_usns(&config.uuid);
+
+    log::debug!(
+        "SSDP advertiser bound on {} → multicast 239.255.255.250:1900 (LOCATION={}, re-announce {}s, {} NT)",
+        local_ip, location, ALIVE_INTERVAL_SECS, usns.len()
+    );
+
+    // Initial burst : send 3 times rapidly so freshly-listening clients catch us.
+    for _ in 0..3 {
+        send_alive(&socket, &location, &usns).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+
+    // Periodic re-announce
+    loop {
+        tokio::select! {
+            _ = shutdown.recv() => {
+                send_byebye(&socket, &usns).await;
+                break;
+            }
+            _ = tokio::time::sleep(Duration::from_secs(ALIVE_INTERVAL_SECS)) => {
+                send_alive(&socket, &location, &usns).await;
+                log::debug!("SSDP NOTIFY alive sent ({} NT entries)", usns.len());
+            }
+        }
+    }
+    log::debug!("SSDP advertiser stopped (byebye sent)");
+    Ok(())
+}
+
+// ─── Message senders ─────────────────────────────────────────────────
+
+async fn send_alive(socket: &UdpSocket, location: &str, usns: &[(String, String)]) {
+    for (nt, usn) in usns {
+        let msg = format!(
+            "NOTIFY * HTTP/1.1\r\n\
+             HOST: 239.255.255.250:1900\r\n\
+             CACHE-CONTROL: max-age=1800\r\n\
+             LOCATION: {location}\r\n\
+             NT: {nt}\r\n\
+             NTS: ssdp:alive\r\n\
+             SERVER: RustMusic/1.0 UPnP/1.0\r\n\
+             USN: {usn}\r\n\
+             \r\n"
+        );
+        if let Err(e) = socket.send_to(msg.as_bytes(), MULTICAST_TARGET).await {
+            log::debug!("SSDP send_alive failed: {}", e);
+        }
+    }
+}
+
+async fn send_byebye(socket: &UdpSocket, usns: &[(String, String)]) {
+    for (nt, usn) in usns {
+        let msg = format!(
+            "NOTIFY * HTTP/1.1\r\n\
+             HOST: 239.255.255.250:1900\r\n\
+             NT: {nt}\r\n\
+             NTS: ssdp:byebye\r\n\
+             USN: {usn}\r\n\
+             \r\n"
+        );
+        let _ = socket.send_to(msg.as_bytes(), MULTICAST_TARGET).await;
+    }
+}

@@ -1,0 +1,8 @@
+pub mod artist;
+pub mod library;
+pub mod audio_lyrics;
+pub mod profil;
+pub mod playlist;
+pub mod queue;
+pub mod recent;
+pub mod settings;

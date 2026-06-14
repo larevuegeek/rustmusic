@@ -1,0 +1,14 @@
+pub mod player_command;
+pub mod library_command;
+pub mod profil_command;
+pub mod playlist_command;
+pub mod recent_command;
+pub mod volume_command;
+pub mod queue_command;
+pub mod settings_command;
+pub mod search_command;
+pub mod lyrics_command;
+pub mod dlna_command;
+pub mod audio_command;
+pub mod system_command;
+pub mod media_controls_command;

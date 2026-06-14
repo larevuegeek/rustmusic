@@ -1,0 +1,11 @@
+pub mod library_repository;
+pub mod library_artist_repository;
+pub mod library_album_repository;
+pub mod library_album_artist_repository;
+pub mod library_cache_repository;
+pub mod library_dirs_repository;
+pub mod library_files_repository;
+pub mod library_track_repository;
+pub mod library_track_artist_repository;
+pub mod library_genre_repository;
+pub mod library_stats_repository;
