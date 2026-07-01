@@ -34,7 +34,7 @@ pub struct AudioQualityStatus {
 fn detect_virt_kind() -> Option<String> {
     #[cfg(target_os = "linux")]
     {
-        return system_detect::detect_linux_virt();
+        return crate::core::system_detect::detect_linux_virt();
     }
     #[cfg(not(target_os = "linux"))]
     {
