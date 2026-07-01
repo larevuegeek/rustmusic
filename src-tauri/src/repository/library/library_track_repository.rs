@@ -1,5 +1,4 @@
-use sqlx::{Row, SqlitePool};
-use sqlx::sqlite::SqliteRow;
+use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::mapper::library::track::track_detail_view::TrackDetailView;

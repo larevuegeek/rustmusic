@@ -1,6 +1,6 @@
 [package]
 name = "rustmusic"
-version = "0.1.7"
+version = "0.1.8"
 description = "Audiophile-grade desktop music player with native DSD playback, multichannel SACD support, DLNA server, synced lyrics, and OS media controls."
 authors = ["LaRevueGeeK <contact@rustmusic.dev>"]
 edition = "2021"
@@ -21,10 +21,10 @@ name = "rustmusic_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6.2", features = [] }
+tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
-tauri = { version = "2.11.2", features = ["protocol-asset", "tray-icon"] }
+tauri = { version = "2.11.4", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-opener = "2.5.4"
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-sql = { version = "2.4.0", features = ["sqlite"] }
@@ -33,16 +33,16 @@ tauri-plugin-notification = "2"
 tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2.4.2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = "1.0.150"
 base64 = "0.22.1"
-cpal = "0.17.1"
+cpal = "0.18.1"
 symphonia = { version = "0.5.5", features = ["default", "mp3", "flac", "wav", "vorbis", "aac"] }
 rubato = "2.0.0"
 lazy_static = "1.5.0"
-log = "0.4.27"
+log = "0.4.33"
 simplelog = "0.12"
 rb = "0.4.1"
-arrayvec = "0.7.6"
+arrayvec = "0.7.7"
 num-traits = "0.2.19"
 anyhow = "1.0.100"
 md5 = "0.8.0"
@@ -55,13 +55,13 @@ sqlx = { version = "0.8.6", features = [
 ] }
 tokio = { version = "1.52.3", features = ["full"] }
 dirs = "6.0.0"
-uuid = { version = "1.23.1", features = ["v4", "serde"] }
+uuid = { version = "1.23.4", features = ["v4", "serde"] }
 unidecode = "0.3.0"
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4.45", features = ["serde"] }
 ringbuf = "0.5.0"
-regex = "1.12.3"
+regex = "1.12.4"
 rayon = "1.12.0"
-reqwest = { version = "0.13.3", features = ["json"] }
+reqwest = { version = "0.13.4", features = ["json"] }
 urlencoding = "2"
 tauri-plugin-updater = "2.10.1"
 image = "0.25.10"
@@ -69,9 +69,15 @@ fast_image_resize = { version = "6.0", default-features = false, features = ["im
 num_cpus = "1.17.0"
 axum = "0.8"
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6.11", features = ["fs"] }
+tower-http = { version = "0.7.0", features = ["fs"] }
 async-trait = "0.1"
 souvlaki = "0.8"
+
+# WASAPI exclusive mode (Windows uniquement) — bit-perfect, bypass mixer
+# Windows. Activable via Réglages → Audio → "WASAPI exclusive". Sur les
+# autres OS ce crate n'est pas compilé.
+[target.'cfg(target_os = "windows")'.dependencies]
+wasapi = "0.23"
 
 [profile.release]
 strip = false

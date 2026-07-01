@@ -21,9 +21,16 @@ import { dlnaStatusStore } from "$lib/stores/dlna/dlna.store";
 import { playbackPipelineStore, pipelineMode } from "$lib/stores/player/playbackPipeline.store";
 import PipelineInfoPopover from "$lib/components/player/PipelineInfoPopover.svelte";
 import { goto } from "$app/navigation";
+import { settingsStore } from "$lib/stores/settings/settings.store";
+import { detectOS } from "$lib/helper/tools/osDetection";
 
 let audioFile = $derived($player?.audioFile);
 let audioTags = $derived(audioFile?.tags);
+
+// Backend audio configuré (indépendant de la lecture — c'est un réglage
+// global). Sur Windows : WASAPI exclusive OU CPAL partagé.
+let isWindows = detectOS() === "windows";
+let wasapiConfigured = $derived($settingsStore.wasapi_exclusive === "true");
 
 // État de la chaîne audio (bit-perfect / resamplé / DSD→PCM) + hover du popover.
 let pipelineModeState = $derived(pipelineMode($playbackPipelineStore));
@@ -415,17 +422,28 @@ function handleForward() {
             </span>
           {/if}
 
-          {#if $playbackPipelineStore && ($playbackPipelineStore.resampler_active || $playbackPipelineStore.intermediate_pcm_rate)}
+          {#if $playbackPipelineStore}
             {@const pipe = $playbackPipelineStore}
             {@const targetRate = pipe.intermediate_pcm_rate ?? pipe.output_sample_rate}
             <Icon icon="lucide:arrow-right" width={8} class="text-neutral-400 dark:text-neutral-600" />
-            <span class="text-emerald-600 dark:text-emerald-400/80 tabular-nums">
+            <span
+              class="tabular-nums {pipe.resampler_active || pipe.intermediate_pcm_rate
+                ? 'text-amber-600 dark:text-amber-400/80'
+                : pipe.bit_perfect
+                  ? 'text-emerald-600 dark:text-emerald-400/80'
+                  : 'text-neutral-500 dark:text-neutral-400'}">
               {targetRate / 1000}k
             </span>
           {/if}
 
           <!-- Badge mode pipeline -->
-          {#if pipelineModeState === "bit-perfect"}
+          {#if pipelineModeState === "dop"}
+            <span class="px-1 py-0.5 rounded-sm font-semibold text-[8px] tracking-wider uppercase
+                         bg-purple-500/10 text-purple-600 dark:text-purple-400
+                         border border-purple-500/25">
+              {$t("pipeline.badge_dop")}
+            </span>
+          {:else if pipelineModeState === "bit-perfect"}
             <span class="px-1 py-0.5 rounded-sm font-semibold text-[8px] tracking-wider uppercase
                          bg-emerald-500/10 text-emerald-600 dark:text-emerald-400
                          border border-emerald-500/25">
@@ -442,6 +460,12 @@ function handleForward() {
                          bg-sky-500/10 text-sky-600 dark:text-sky-400
                          border border-sky-500/25">
               {$t("pipeline.badge_dsd_pcm")}
+            </span>
+          {:else if pipelineModeState === "shared"}
+            <span class="px-1 py-0.5 rounded-sm font-semibold text-[8px] tracking-wider uppercase
+                         bg-neutral-500/10 text-neutral-600 dark:text-neutral-400
+                         border border-neutral-500/25">
+              {$t("pipeline.badge_shared")}
             </span>
           {/if}
         </div>
@@ -612,20 +636,33 @@ function handleForward() {
             {/if}
           {/if}
 
-          <!-- Flèche + sortie : préfère le rate INTERMÉDIAIRE (post-DSD2PCM)
-               sinon le rate device. -->
-          {#if $playbackPipelineStore && ($playbackPipelineStore.resampler_active || $playbackPipelineStore.intermediate_pcm_rate)}
+          <!-- Flèche + sortie : affichée dès qu'on a une pipeline info.
+               Couleur : ambre si resampling / DSD, vert si bit-perfect,
+               gris si shared (mixer Windows sans resampling). -->
+          {#if $playbackPipelineStore}
             {@const pipe = $playbackPipelineStore}
             {@const targetRate = pipe.intermediate_pcm_rate ?? pipe.output_sample_rate}
             <Icon icon="lucide:arrow-right" width={10} class="text-neutral-400 dark:text-neutral-600" />
-            <span class="text-emerald-600 dark:text-emerald-400/80">
+            <span
+              class={pipe.resampler_active || pipe.intermediate_pcm_rate
+                ? 'text-amber-600 dark:text-amber-400/80'
+                : pipe.bit_perfect
+                  ? 'text-emerald-600 dark:text-emerald-400/80'
+                  : 'text-neutral-500 dark:text-neutral-400'}
+            >
               {targetRate / 1000} kHz
             </span>
           {/if}
         </div>
 
-        <!-- Badge mode pipeline : bit-perfect / resamplé / DSD→PCM -->
-        {#if pipelineModeState === "bit-perfect"}
+        <!-- Badge mode pipeline : DoP / bit-perfect / shared / resamplé / DSD→PCM -->
+        {#if pipelineModeState === "dop"}
+          <span class="px-1.5 py-0.5 rounded-sm font-semibold text-[9px] tracking-wider uppercase
+                       bg-purple-500/10 text-purple-600 dark:text-purple-400
+                       border border-purple-500/25">
+            {$t("pipeline.badge_dop")}
+          </span>
+        {:else if pipelineModeState === "bit-perfect"}
           <span class="px-1.5 py-0.5 rounded-sm font-semibold text-[9px] tracking-wider uppercase
                        bg-emerald-500/10 text-emerald-600 dark:text-emerald-400
                        border border-emerald-500/25">
@@ -642,6 +679,12 @@ function handleForward() {
                        bg-sky-500/10 text-sky-600 dark:text-sky-400
                        border border-sky-500/25">
             {$t("pipeline.badge_dsd_pcm")}
+          </span>
+        {:else if pipelineModeState === "shared"}
+          <span class="px-1.5 py-0.5 rounded-sm font-semibold text-[9px] tracking-wider uppercase
+                       bg-neutral-500/10 text-neutral-600 dark:text-neutral-400
+                       border border-neutral-500/25">
+            {$t("pipeline.badge_shared")}
           </span>
         {/if}
 
@@ -701,11 +744,32 @@ function handleForward() {
       </button>
     {/if}
 
+    <!-- Backend audio configuré (toujours visible sur Windows — reflète la
+         config globale, pas seulement la lecture en cours). -->
+    {#if isWindows}
+      <button
+        type="button"
+        class="ml-auto shrink-0 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md
+               text-[10px] font-semibold uppercase tracking-wider cursor-pointer
+               transition-colors
+               {wasapiConfigured
+                 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 hover:bg-amber-500/15'
+                 : 'bg-neutral-500/10 text-neutral-500 dark:text-neutral-400 border border-neutral-500/20 hover:bg-neutral-500/15'}"
+        onclick={() => goto('/settings')}
+        title={wasapiConfigured
+          ? $t('player.wasapi_on_short')
+          : $t('player.wasapi_off_short')}
+      >
+        <Icon icon={wasapiConfigured ? 'lucide:audio-lines' : 'lucide:volume-2'} width="11" />
+        {wasapiConfigured ? 'WASAPI' : $t('pipeline.badge_shared')}
+      </button>
+    {/if}
+
     <!-- DLNA active indicator (visible only when server is running) -->
     {#if $dlnaStatusStore?.running}
       <button
         type="button"
-        class="ml-auto shrink-0 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md
+        class="{isWindows ? '' : 'ml-auto'} shrink-0 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md
                text-[10px] font-semibold uppercase tracking-wider cursor-pointer
                bg-emerald-500/10 text-emerald-600 dark:text-emerald-400
                border border-emerald-500/20

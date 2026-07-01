@@ -5,10 +5,11 @@ import fr from "./locales/fr.json";
 import en from "./locales/en.json";
 import es from "./locales/es.json";
 import de from "./locales/de.json";
+import it from "./locales/it.json";
 
 type Translations = Record<string, any>;
 
-const locales: Record<string, Translations> = { fr, en, es, de };
+const locales: Record<string, Translations> = { fr, en, es, de, it };
 
 // Store réactif de la langue courante — dérivé du settings store
 const currentLocale = derived(settingsStore, ($settings) => {

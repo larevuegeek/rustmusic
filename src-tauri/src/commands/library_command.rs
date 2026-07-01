@@ -968,8 +968,6 @@ pub async fn fetch_album_cover(
                     covers_dir.push("covers");
                     covers_dir.push("albums");
 
-                    let filename = format!("album_{}.jpg", album_id.replace("-", ""));
-
                     match crate::helper::library::thumbnail_helper::thumbnail_saver(&covers_dir, &bytes.to_vec(), false) {
                         Ok(full_path) => Some(full_path),
                         Err(e) => {
@@ -1001,8 +999,6 @@ pub async fn fetch_all_album_covers(
     state: State<'_, AppState>,
     library_id: i64,
 ) -> Result<u32, String> {
-    use crate::repository::artist::artist_repository::ArtistRepository;
-
     let albums = LibraryAlbumRepository::find_albums_without_cover(&state.pool, library_id)
         .await
         .map_err(|e| format!("DB error: {}", e))?;
@@ -1023,12 +1019,6 @@ pub async fn fetch_all_album_covers(
             "total": total,
             "name": album.title,
         }));
-
-        // Récupérer le nom de l'artiste
-        let artist_name = ArtistRepository::get_image_url(&state.pool, &album.artist_id)
-            .await
-            .ok()
-            .flatten();
 
         // On cherche par artiste_id → nom
         let artist: Option<String> = match sqlx::query_as::<_, (String,)>("SELECT name FROM artists WHERE id = ?")

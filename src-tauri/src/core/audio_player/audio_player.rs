@@ -230,6 +230,11 @@ impl AudioPlayer {
             }
         }
 
+        // Chemin PCM (Symphonia) : on n'est PLUS en DSD → fermer le moteur DoP
+        // s'il tournait encore (libère le DAC, qui repasse en PCM).
+        #[cfg(target_os = "windows")]
+        crate::core::audio_player::output::dop_engine::teardown_engine();
+
         log::debug!("Fichier sélectionné : {:?}", file_path);
 
         // ========== PHASE 1 : PROBE ET INFOS ==========
@@ -327,8 +332,8 @@ impl AudioPlayer {
         log::debug!("Output device: {:?}", device.description());
 
         let output_config: cpal::SupportedStreamConfig = device.default_output_config()?;
-        let output_sample_rate: u32 = output_config.sample_rate();
-        let output_channels: u16 = output_config.channels();
+        let mut output_sample_rate: u32 = output_config.sample_rate();
+        let mut output_channels: u16 = output_config.channels();
         log::info!(
             "🔊 CPAL device negotiated : {} Hz × {} ch · sample format {:?} · buffer config {:?}",
             output_sample_rate,
@@ -336,6 +341,57 @@ impl AudioPlayer {
             output_config.sample_format(),
             output_config.buffer_size()
         );
+
+        // ─── Nom complet du device CPAL "Nom (Fabricant/Pilote)" ───
+        // Nécessaire tôt : sert au matching WASAPI (le nom brut seul est
+        // ambigu) ET à la pipeline info. Identique au display_name de
+        // device_command pour que la sélection UI corresponde.
+        let device_name = device
+            .description()
+            .ok()
+            .map(|d| {
+                let name = d.name().to_string();
+                match (d.manufacturer(), d.driver()) {
+                    (Some(mfr), _) => format!("{} ({})", name, mfr),
+                    (_, Some(drv)) => format!("{} ({})", name, drv),
+                    _ => name,
+                }
+            })
+            .unwrap_or_else(|| "Périphérique audio".to_string());
+
+        // ─── Pré-négociation WASAPI (Windows) : pilote le décodeur au rate
+        // natif du DAC pour une vraie sortie bit-perfect ───
+        // Le décodeur resample source → output_sample_rate. Pour du
+        // bit-perfect, on veut que ce rate soit celui que WASAPI jouera
+        // (idéalement le rate source, sinon le meilleur rate accepté par le
+        // DAC en exclusive). On négocie DONC ici, avant de configurer le
+        // décodeur, et on override output_sample_rate/channels en conséquence.
+        #[cfg(target_os = "windows")]
+        {
+            use crate::core::audio_player::output;
+            if matches!(output::current_preference(), output::AudioBackend::WasapiExclusive) {
+                match crate::core::audio_player::audio_output_wasapi::try_negotiate_exclusive_format(
+                    source_sample_rate,
+                    channels as u16,
+                    Some(device_name.clone()),
+                ) {
+                    Ok(fmt) => {
+                        log::info!(
+                            "🎚️  WASAPI pré-négocié : décodeur piloté à {} Hz / {} ch (au lieu de {} Hz / {} ch CPAL)",
+                            fmt.sample_rate, fmt.channels, output_sample_rate, output_channels
+                        );
+                        output_sample_rate = fmt.sample_rate;
+                        output_channels = fmt.channels;
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "🎚️  WASAPI pré-négociation échouée ({}), décodeur reste au rate CPAL {} Hz",
+                            e, output_sample_rate
+                        );
+                    }
+                }
+            }
+        }
 
         // CPAL buffer size : sur VM / Minimal profile on demande un buffer
         // BEAUCOUP plus gros (~500 ms) pour absorber les délais de scheduling.
@@ -389,31 +445,8 @@ impl AudioPlayer {
             output_sample_rate, output_channels, source_sample_rate, channels
         );
 
-        // ─── Pipeline info to the frontend (for the player status bar) ───
-        let profile_for_pipeline = crate::core::audio_quality::current_profile();
-        let device_name = device
-            .description()
-            .ok()
-            .map(|d| d.name().to_string())
-            .unwrap_or_else(|| "Périphérique audio".to_string());
-        crate::core::audio_player::pipeline_info::PlaybackPipelineInfo {
-            source_format: crate::core::audio_player::pipeline_info::symphonia_format_label(
-                codec_params.codec,
-            )
-            .to_string(),
-            source_sample_rate,
-            source_bits: codec_params.bits_per_sample.unwrap_or(16),
-            source_channels: channels as u8,
-            intermediate_pcm_rate: None,
-            dsd_filter_taps: None,
-            dsd_decimation: None,
-            output_sample_rate,
-            output_channels: output_channels as u8,
-            device_name: device_name.clone(),
-            resampler_active: source_sample_rate != output_sample_rate,
-            quality_profile: format!("{:?}", profile_for_pipeline).to_lowercase(),
-        }
-        .emit(&app_handle);
+        // La pipeline info sera émise APRÈS la création du backend audio
+        // (WASAPI peut négocier ses propres rate/channels/device_name).
 
         // ========== PHASE 3 : BUFFERS ==========
         // 1. La source actuelle (0 = LiveDecode, 1 = FullBuffer)
@@ -472,6 +505,11 @@ impl AudioPlayer {
         let seek_flush: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let seek_flush_decoder: Arc<AtomicBool> = seek_flush.clone();
         let total_duration_for_decoder: Arc<AtomicU64> = total_duration.clone();
+
+        // Extraits pour la pipeline info émise après audio_output.start() —
+        // codec_params est déplacé dans le thread décodeur juste après.
+        let pipeline_codec = codec_params.codec;
+        let pipeline_source_bits = codec_params.bits_per_sample.unwrap_or(16);
 
         let decoder_handle: JoinHandle<Result<(), String>> = std::thread::spawn(move || {
             decode_thread(
@@ -579,134 +617,77 @@ impl AudioPlayer {
 
         is_playing.store(true, Ordering::SeqCst);
 
-        // Clones pour le thread CPAL (le Consumer)
-        let is_paused_cpal: Arc<AtomicBool> = is_paused.clone();
-        let is_stopped_cpal: Arc<AtomicBool> = is_stopped.clone();
-        let current_source_cpal: Arc<AtomicU8> = current_source.clone();
-        let full_buffer_data_cpal: Arc<std::sync::RwLock<Vec<_>>> = full_buffer_data.clone();
-        let full_buffer_cursor_cpal: Arc<AtomicUsize> = full_buffer_cursor.clone();
-        let is_full_buffer_ready_cpal: Arc<AtomicBool> = is_full_buffer_ready.clone();
-        let current_position_frames_cpal: Arc<AtomicUsize> = current_position_frames.clone();
-        let volume_cpal: Arc<AtomicU8> = volume.clone();
-        let seek_flush_cpal: Arc<AtomicBool> = seek_flush.clone();
-        let pending_seek_frames_cpal: Arc<AtomicUsize> = pending_seek_frames.clone();
-        let mut fade_in_samples: usize = 0; // Compteur pour fade-in post-seek
+        // ─── Backend audio (CPAL shared OU WASAPI exclusive) ───
+        // Déléguée au module `output` qui résout la préférence utilisateur
+        // (toggle dans Réglages), tente WASAPI avec fallback automatique
+        // sur CPAL si la négociation échoue, et expose le trait AudioOutput.
+        use crate::core::audio_player::output;
+        let playback_atomics = output::PlaybackAtomics {
+            is_paused: is_paused.clone(),
+            is_stopped: is_stopped.clone(),
+            volume: volume.clone(),
+            current_position_frames: current_position_frames.clone(),
+        };
+        let symphonia_shared = output::SymphoniaSharedState {
+            full_buffer_data: full_buffer_data.clone(),
+            full_buffer_cursor: full_buffer_cursor.clone(),
+            is_full_buffer_ready: is_full_buffer_ready.clone(),
+            current_source: current_source.clone(),
+            seek_flush: seek_flush.clone(),
+            pending_seek_frames: pending_seek_frames.clone(),
+            output_channels,
+        };
 
-        let stream: cpal::Stream = device.build_output_stream(
-            &config,
-            move |output: &mut [f32], _| {
-                // --- Pause & Stop ---
-                if is_paused_cpal.load(Ordering::Relaxed) || is_stopped_cpal.load(Ordering::Relaxed) {
-                    output.fill(0.0);
-                    return;
-                }
+        let mut audio_output = output::create_symphonia_output(
+            output::current_preference(),
+            source_sample_rate,
+            channels as u16,
+            device,
+            config,
+            device_name.clone(),
+            playback_atomics,
+            symphonia_shared,
+            consumer,
+        )
+        .map_err(|e| -> Box<dyn std::error::Error> { format!("AudioOutput: {e}").into() })?;
 
-                // --- Seek flush : repositionner après un seek ---
-                if seek_flush_cpal.load(Ordering::Acquire) {
-                    // Vider le ring buffer (LiveDecode)
-                    let to_skip = consumer.occupied_len();
-                    consumer.skip(to_skip);
+        audio_output
+            .start()
+            .map_err(|e| -> Box<dyn std::error::Error> { format!("AudioOutput start: {e}").into() })?;
 
-                    // Repositionner le curseur FullBuffer. On lit la target
-                    // depuis pending_seek_frames (single-writer Phase 6 →
-                    // single-reader CPAL). Si pas de target en attente
-                    // (LiveDecode pur), on retombe sur current_position_frames.
-                    let target = pending_seek_frames_cpal.load(Ordering::Acquire);
-                    let new_frames = if target != usize::MAX {
-                        pending_seek_frames_cpal.store(usize::MAX, Ordering::Relaxed);
-                        current_position_frames_cpal.store(target, Ordering::Relaxed);
-                        target
-                    } else {
-                        current_position_frames_cpal.load(Ordering::Relaxed)
-                    };
-                    let new_cursor = new_frames * output_channels as usize;
-                    full_buffer_cursor_cpal.store(new_cursor, Ordering::Relaxed);
+        log::debug!("▶️ Lecture en cours via {}", audio_output.backend().display_name());
 
-                    seek_flush_cpal.store(false, Ordering::Release);
-                    fade_in_samples = 2048; // ~42ms de fade-in à 48kHz
-                    output.fill(0.0);
-                    return;
-                }
-
-                let source: u8 = current_source_cpal.load(Ordering::Relaxed);
-                let mut samples_read: usize = 0;
-
-                if source == 0 { 
-                    // Mode LiveDecode (RingBuffer)
-                    samples_read = consumer.pop_slice(output);
-                    
-                    // Si on n'a pas pu remplir tout l'output, on met des 0 pour éviter les parasites
-                    if samples_read < output.len() {
-                        output[samples_read..].fill(0.0);
-                    }
-                } else { 
-                    // Mode FullBuffer
-                    if is_full_buffer_ready_cpal.load(Ordering::Relaxed) {
-                        if let Ok(fb) = full_buffer_data_cpal.read() {
-                            let cursor: usize = full_buffer_cursor_cpal.load(Ordering::Relaxed);
-                            let available: usize = fb.len().saturating_sub(cursor);
-                            samples_read = available.min(output.len());
-                            
-                            if samples_read > 0 {
-                                output[..samples_read].copy_from_slice(&fb[cursor..cursor + samples_read]);
-                                full_buffer_cursor_cpal.fetch_add(samples_read, Ordering::Relaxed);
-                            }
-                            
-                            if samples_read < output.len() {
-                                output[samples_read..].fill(0.0);
-                            }
-                        } else {
-                            output.fill(0.0);
-                        }
-                    } else {
-                        output.fill(0.0);
-                    }
-                }
-
-                // --- Mise à jour position ---
-                if samples_read > 0 && !seek_flush_cpal.load(Ordering::Relaxed) {
-                    let source_mode = current_source_cpal.load(Ordering::Relaxed);
-                    if source_mode == 1 {
-                        // FullBuffer : dériver la position depuis le curseur (source de vérité)
-                        let cursor = full_buffer_cursor_cpal.load(Ordering::Relaxed);
-                        current_position_frames_cpal.store(cursor / output_channels as usize, Ordering::Relaxed);
-                    } else {
-                        // LiveDecode : incrémenter les frames jouées
-                        let frames = samples_read / output_channels as usize;
-                        current_position_frames_cpal.fetch_add(frames, Ordering::Relaxed);
-                    }
-                }
-
-                // --- Volume + Clipping + Fade-in post-seek ---
-                let vol: f32 = volume_cpal.load(Ordering::Relaxed) as f32 / 100.0;
-                for s in output.iter_mut() {
-                    let fade = if fade_in_samples > 0 {
-                        fade_in_samples -= 1;
-                        (2048 - fade_in_samples) as f32 / 2048.0
-                    } else {
-                        1.0
-                    };
-                    *s = (*s * vol * fade * 0.98).clamp(-1.0, 1.0);
-                }
-            },
-            {
-                // Throttle pour éviter le spam dans le terminal : on log la 1re
-                // erreur puis 1 sur 100 puis 1 sur 1000. Sur VM contrainte les
-                // BufferUnderrun peuvent atteindre 100/s alors que la lecture
-                // est en réalité OK (l'OS scheduler retarde juste le callback).
-                let cpal_error_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-                move |err| {
-                    let n = cpal_error_count.fetch_add(1, Ordering::Relaxed);
-                    if n == 0 || (n < 1000 && n % 100 == 0) || n % 1000 == 0 {
-                        log::error!("❌ Erreur audio (#{}): {:?}", n + 1, err);
-                    }
-                }
-            },
-            None,
-        )?;
-
-        stream.play()?;
-        log::debug!("▶️ Lecture en cours...");
+        // ─── Pipeline info to the frontend (for the player status bar) ───
+        // Émise après la création du backend pour refléter les vraies valeurs
+        // (WASAPI exclusive matche typiquement le source rate, CPAL shared
+        // utilise le sample rate configuré du device Windows).
+        let profile_for_pipeline = crate::core::audio_quality::current_profile();
+        let effective_output_rate = audio_output.output_sample_rate();
+        let effective_output_channels = audio_output.output_channels();
+        let effective_device_name = audio_output.device_name().to_string();
+        let backend_label = audio_output.backend().display_name().to_string();
+        let bit_perfect = audio_output.backend().is_bit_perfect_capable()
+            && effective_output_rate == source_sample_rate;
+        crate::core::audio_player::pipeline_info::PlaybackPipelineInfo {
+            source_format: crate::core::audio_player::pipeline_info::symphonia_format_label(
+                pipeline_codec,
+            )
+            .to_string(),
+            source_sample_rate,
+            source_bits: pipeline_source_bits,
+            source_channels: channels as u8,
+            intermediate_pcm_rate: None,
+            dsd_filter_taps: None,
+            dsd_decimation: None,
+            output_sample_rate: effective_output_rate,
+            output_channels: effective_output_channels as u8,
+            device_name: effective_device_name,
+            resampler_active: source_sample_rate != effective_output_rate,
+            quality_profile: format!("{:?}", profile_for_pipeline).to_lowercase(),
+            backend: backend_label,
+            bit_perfect,
+        }
+        .emit(&app_handle);
 
         // Safety : re-émettre preparing: false après le démarrage effectif
         // de CPAL au cas où le précédent emit (Minimal pre-decode) aurait été
@@ -800,8 +781,8 @@ impl AudioPlayer {
 
         log::debug!("✅ Lecture terminée");
 
-        drop(stream);
-        log::debug!("🧹 Fin de lecture - stream libéré");
+        drop(audio_output);
+        log::debug!("🧹 Fin de lecture - backend audio libéré");
 
         is_stream_alive.store(false, Ordering::SeqCst);
         
@@ -903,6 +884,87 @@ impl AudioPlayer {
                 .ok_or("Pas de périphérique audio")?
         };
 
+        // ─── Décision DSD natif (DoP) — Windows uniquement ───
+        // DoP si : préférence activée + WASAPI exclusive actif + profil non
+        // Minimal + le DAC accepte le format porteur (24-bit au rate DSD/16).
+        // Sinon on continue sur le chemin DSD2PCM classique.
+        #[cfg(target_os = "windows")]
+        {
+            use crate::core::audio_player::output;
+            let profile_dop = crate::core::audio_quality::current_profile();
+            let is_minimal = matches!(
+                profile_dop,
+                crate::core::audio_quality::AudioQualityProfile::Minimal
+            );
+            let dop_wanted = output::dop_enabled()
+                && matches!(
+                    output::current_preference(),
+                    output::AudioBackend::WasapiExclusive
+                )
+                && !is_minimal;
+
+            if dop_wanted {
+                let carrier = crate::core::audio_decoder::dsd::dop_encoder::dop_carrier_rate(dsd_rate);
+                // Nom complet "Nom (Fabricant)" pour cibler le bon DAC en WASAPI.
+                let device_full_name = device
+                    .description()
+                    .ok()
+                    .map(|d| {
+                        let name = d.name().to_string();
+                        match (d.manufacturer(), d.driver()) {
+                            (Some(mfr), _) => format!("{} ({})", name, mfr),
+                            (_, Some(drv)) => format!("{} ({})", name, drv),
+                            _ => name,
+                        }
+                    })
+                    .unwrap_or_else(|| "Périphérique audio".to_string());
+
+                let supported = crate::core::audio_player::audio_output_wasapi::dop_format_supported(
+                    carrier,
+                    channel_count as u16,
+                    Some(device_full_name.clone()),
+                );
+
+                if supported {
+                    log::info!(
+                        "🎚️  DSD natif (DoP) activé : {} → porteur {} Hz sur '{}'",
+                        crate::core::audio_player::pipeline_info::dsd_label(dsd_rate),
+                        carrier,
+                        device_full_name
+                    );
+                    let lsb_first = ext == "dsf";
+                    return Self::run_dsd_dop_thread(
+                        app_handle,
+                        decoder,
+                        file_path,
+                        lsb_first,
+                        dsd_rate,
+                        channel_count,
+                        carrier,
+                        device_full_name,
+                        duration,
+                        is_paused,
+                        is_playing,
+                        is_stopped,
+                        is_stream_alive,
+                        current_position,
+                        total_duration,
+                        seek_position,
+                    );
+                } else {
+                    log::warn!(
+                        "🎚️  DoP non supporté par le DAC au porteur {} Hz, fallback DSD2PCM",
+                        carrier
+                    );
+                }
+            }
+        }
+
+        // On ne joue PAS ce DSD en DoP (toggle off, format non supporté, ou
+        // Minimal) → fermer un éventuel moteur DoP vivant (le DAC repasse en PCM).
+        #[cfg(target_os = "windows")]
+        crate::core::audio_player::output::dop_engine::teardown_engine();
+
         let output_config = device.default_output_config()?;
         let output_sample_rate = output_config.sample_rate();
         let output_channels = output_config.channels();
@@ -955,6 +1017,11 @@ impl AudioPlayer {
             device_name: dsd_device_name,
             resampler_active: intermediate_pcm_rate != output_sample_rate,
             quality_profile: format!("{:?}", profile_for_pipeline).to_lowercase(),
+            // DSD passe par CPAL (WASAPI exclusive DSD non supporté ici).
+            backend: crate::core::audio_player::output::AudioBackend::CpalShared
+                .display_name()
+                .to_string(),
+            bit_perfect: false,
         }
         .emit(&app_handle);
 
@@ -1100,7 +1167,7 @@ impl AudioPlayer {
             let output_channels_cpal = output_channels;
 
             let stream = device.build_output_stream(
-                &config,
+                config.clone(),
                 move |output: &mut [f32], _| {
                     if is_paused_cpal.load(Ordering::Relaxed)
                         || is_stopped_cpal.load(Ordering::Relaxed)
@@ -1255,7 +1322,7 @@ impl AudioPlayer {
         let mut fade_in_samples: usize = 0;
 
         let stream = device.build_output_stream(
-            &config,
+            config.clone(),
             move |output: &mut [f32], _| {
                 if is_paused_cpal.load(Ordering::Relaxed)
                     || is_stopped_cpal.load(Ordering::Relaxed)
@@ -1361,6 +1428,151 @@ impl AudioPlayer {
 
         Ok(())
     }
+
+    /// Chemin **DSD natif (DoP)** — Windows uniquement.
+    ///
+    /// Décode les octets DSD → encode en trames DoP → ring buffer i32 → backend
+    /// WASAPI DoP qui écrit verbatim au DAC (DSD natif, bit-perfect). Aucun
+    /// resampling, aucune conversion PCM, volume logiciel inopérant.
+    #[cfg(target_os = "windows")]
+    #[allow(clippy::too_many_arguments)]
+    fn run_dsd_dop_thread(
+        app_handle: AppHandle,
+        decoder: Box<dyn DsdContainerReader + Send>,
+        file_path: PathBuf,
+        lsb_first: bool,
+        dsd_rate: u32,
+        channel_count: u8,
+        carrier_rate: u32,
+        device_full_name: String,
+        duration: f64,
+        is_paused: Arc<AtomicBool>,
+        is_playing: Arc<AtomicBool>,
+        is_stopped: Arc<AtomicBool>,
+        is_stream_alive: Arc<AtomicBool>,
+        current_position: Arc<AtomicU64>,
+        total_duration: Arc<AtomicU64>,
+        seek_position: Arc<AtomicU64>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::core::audio_player::output::dop_engine;
+
+        let channels = channel_count as u16;
+        let profile = crate::core::audio_quality::current_profile();
+
+        // ─── Démarrer la piste sur le MOTEUR DoP persistant (gapless) ───
+        // Réutilise le moteur vivant si le DAC est déjà locké sur un carrier
+        // compatible (→ démarrage instantané, pas de warm-up). Sinon en crée un
+        // nouveau (warm-up ~2.5 s pour le lock DSD).
+        let (handle, warmup_needed) = match dop_engine::begin_track_on_engine(
+            carrier_rate,
+            channels,
+            device_full_name.clone(),
+            is_paused.clone(),
+            decoder,
+            lsb_first,
+            seek_position.clone(),
+            total_duration.clone(),
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("❌ Moteur DoP indisponible: {e}");
+                let _ = app_handle.emit("playback-preparing", false);
+                is_playing.store(false, Ordering::SeqCst);
+                return Err(format!("DoP engine: {e}").into());
+            }
+        };
+
+        // ─── Pipeline info (DoP) ───
+        crate::core::audio_player::pipeline_info::PlaybackPipelineInfo {
+            source_format: crate::core::audio_player::pipeline_info::dsd_label(dsd_rate),
+            source_sample_rate: dsd_rate,
+            source_bits: 1,
+            source_channels: channel_count,
+            intermediate_pcm_rate: None,
+            dsd_filter_taps: None,
+            dsd_decimation: None,
+            output_sample_rate: carrier_rate,
+            output_channels: channel_count,
+            device_name: device_full_name.clone(),
+            resampler_active: false,
+            quality_profile: format!("{:?}", profile).to_lowercase(),
+            backend: "WASAPI DoP".to_string(),
+            bit_perfect: true,
+        }
+        .emit(&app_handle);
+
+        // Compteur figé UNIQUEMENT si un warm-up est nécessaire (nouveau moteur).
+        // En réutilisation, le DAC est déjà locké → démarrage instantané.
+        if warmup_needed {
+            let _ = app_handle.emit("playback-preparing", true);
+        } else {
+            let _ = app_handle.emit("playback-preparing", false);
+        }
+
+        is_playing.store(true, Ordering::SeqCst);
+        is_stream_alive.store(true, Ordering::SeqCst);
+
+        // ─── Attente fin de piste : position + dé-figeage compteur ───
+        let mut preparing_cleared = !warmup_needed;
+        let wait_start = std::time::Instant::now();
+        let total_frames_expected = (duration * carrier_rate as f64) as usize;
+        let end_threshold = total_frames_expected.saturating_sub(carrier_rate as usize / 4);
+        let mut user_stopped = false;
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+
+            // Dé-fige le compteur quand la musique démarre (warm-up fini) ou
+            // après un garde-fou de 6 s.
+            if !preparing_cleared
+                && (handle.audio_started.load(Ordering::Relaxed)
+                    || wait_start.elapsed().as_secs() >= 6)
+            {
+                let _ = app_handle.emit("playback-preparing", false);
+                preparing_cleared = true;
+            }
+
+            let frames = handle.music_frames_played.load(Ordering::Relaxed);
+            let new_pos = frames as f64 / carrier_rate as f64;
+            current_position.store(new_pos.to_bits(), Ordering::Relaxed);
+
+            if is_stopped.load(Ordering::Relaxed) {
+                user_stopped = true;
+                break;
+            }
+            if handle.decoder_done.load(Ordering::Relaxed) && frames >= end_threshold {
+                break;
+            }
+        }
+
+        // Fin de piste : on GARDE le moteur vivant (silence DSD → DAC locké,
+        // gapless). Le décodeur courant est arrêté ; un watchdog fermera le
+        // moteur si aucune piste ne suit dans 5 s (vrai arrêt utilisateur).
+        // Sur STOP utilisateur : on draine la musique bufferisée pour que
+        // l'audio se taise IMMÉDIATEMENT (sinon jusqu'à ~4 s de buffer joué).
+        dop_engine::end_current_track_on_engine(user_stopped);
+
+        log::debug!("✅ [DoP] Fin de piste (moteur gardé vivant, user_stopped={user_stopped})");
+        is_stream_alive.store(false, Ordering::SeqCst);
+
+        if !preparing_cleared {
+            let _ = app_handle.emit("playback-preparing", false);
+        }
+
+        // playback-ended seulement sur fin naturelle (→ le frontend enchaîne).
+        if !user_stopped {
+            if let Err(e) =
+                app_handle.emit("playback-ended", file_path.to_string_lossy().to_string())
+            {
+                log::error!("❌ Erreur d'envoi de l'event Tauri : {}", e);
+            }
+        }
+
+        is_stopped.store(false, Ordering::SeqCst);
+        is_playing.store(false, Ordering::SeqCst);
+        current_position.store(0.0_f64.to_bits(), Ordering::Relaxed);
+
+        Ok(())
+    }
 }
 
 // ===============
@@ -1421,15 +1633,12 @@ where
             let seek_seconds = f64::from_bits(seek_bits).max(0.0).min(total_dur.max(0.0));
             let new_frames = (seek_seconds * output_sample_rate as f64) as usize;
 
-            // CAS 1 : FullBuffer prêt — le fichier est entièrement décodé en RAM
-            // Instantané : on bouge directement le curseur, pas de flush nécessaire
+            // CAS 1 : FullBuffer prêt — le fichier est entièrement décodé en RAM.
+            // Le décodeur n'a pas accès direct à `full_buffer_cursor`, on passe
+            // donc par `seek_flush` que CPAL traitera à son prochain callback
+            // (~1 ms) en repositionnant le curseur depuis `current_position_frames`.
             if is_full_buffer_ready.load(Ordering::Relaxed) {
-                let new_cursor = new_frames * output_channels as usize;
                 current_position_frames.store(new_frames, Ordering::Relaxed);
-                // Écriture directe du curseur — CPAL lira depuis cette position au prochain callback
-                // Pas de seek_flush, pas d'attente
-                // Note : full_buffer_cursor n'est pas accessible ici, on passe par seek_flush
-                // mais sans attente — CPAL le traitera au prochain callback (~1ms)
                 seek_flush.store(true, Ordering::Relaxed);
                 log::debug!("Seek FullBuffer à {:.1}s (instantané)", seek_seconds);
                 continue;
@@ -1450,12 +1659,16 @@ where
                     }
                     total_frames_decoded = (seek_seconds * source_sample_rate as f64) as u64;
 
-                    // Flush le ring buffer
+                    // Flush le ring buffer — wait que CPAL ACK le flush.
+                    // En conditions normales CPAL répond en 5-20 ms (un cycle
+                    // de callback). On poll à 1 ms avec timeout 80 ms : safety
+                    // net si CPAL est bloqué (driver freeze), mais sans pénalité
+                    // perçue par l'utilisateur.
                     seek_flush.store(true, Ordering::Relaxed);
                     let flush_start = std::time::Instant::now();
                     while seek_flush.load(Ordering::Relaxed) {
-                        std::thread::sleep(std::time::Duration::from_millis(5));
-                        if flush_start.elapsed().as_millis() > 200 {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        if flush_start.elapsed().as_millis() > 80 {
                             seek_flush.store(false, Ordering::Relaxed);
                             break;
                         }
@@ -1567,9 +1780,19 @@ where
 
         if current_source_mode == 0 { // 0 = LiveDecode
             let mut offset: usize = 0;
-            
+
             while offset < adapted_samples.len() {
                 if is_stopped.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                // ⚡ Réactivité seek : si l'utilisateur a demandé un seek pendant
+                // qu'on est bloqué à pousser dans un ring buffer plein, on abandonne
+                // le push en cours pour traiter le seek au plus vite. Sans ça, le
+                // décodeur peut rester bloqué 20-100 ms à pousser un packet, ce qui
+                // donne une latence ressentie à chaque seek pendant que le buffer
+                // est rempli (fréquent juste après le démarrage).
+                if seek_position.load(Ordering::Relaxed) != u64::MAX {
                     break;
                 }
 

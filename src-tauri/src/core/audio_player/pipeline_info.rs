@@ -31,7 +31,7 @@ pub struct PlaybackPipelineInfo {
     /// for DSD64 → 88.2 kHz). `None` for PCM sources.
     pub dsd_decimation: Option<u32>,
 
-    // ── Output (delivered to CPAL) ──
+    // ── Output (delivered to the audio backend) ──
     /// Device sample rate (after resampler, if any).
     pub output_sample_rate: u32,
     pub output_channels: u8,
@@ -44,6 +44,13 @@ pub struct PlaybackPipelineInfo {
     pub resampler_active: bool,
     /// Active quality profile : `"high"` / `"medium"` / `"low"`.
     pub quality_profile: String,
+    /// Backend audio effectif : `"CPAL shared"` ou `"WASAPI exclusive"`. Sert
+    /// à afficher un badge côté frontend et à contextualiser la sortie.
+    pub backend: String,
+    /// `true` quand la chaîne est bit-perfect (WASAPI exclusive + pas de
+    /// resampling + source rate accepté par le DAC). Sert au badge
+    /// « Bit-perfect » côté frontend.
+    pub bit_perfect: bool,
 }
 
 impl PlaybackPipelineInfo {

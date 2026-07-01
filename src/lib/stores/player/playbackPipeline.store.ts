@@ -34,21 +34,30 @@ export type PlaybackPipelineInfo = {
   resampler_active: boolean;
   /** Active quality profile : "high" | "medium" | "low". */
   quality_profile: string;
+  /** Effective audio backend : "CPAL shared" | "WASAPI exclusive". */
+  backend: string;
+  /** True when the whole chain is bit-perfect (WASAPI exclusive + no resampling). */
+  bit_perfect: boolean;
 };
 
 /**
  * Derived flag describing the pipeline mode for the UI badge.
- *  - "bit-perfect" : nothing modifies the samples (source rate == device rate, no DSD)
+ *  - "dop"         : native DSD sent to the DAC via DoP (DSD over PCM), no conversion
+ *  - "bit-perfect" : WASAPI exclusive + no resampling — samples untouched to the DAC
  *  - "resampled"   : a resampler is in the chain (rate conversion)
  *  - "dsd"         : DSD source is decoded to PCM (always involves DSP)
+ *  - "shared"      : CPAL / WASAPI shared — no resampling but the OS mixer touches samples
  */
-export type PipelineMode = "bit-perfect" | "resampled" | "dsd";
+export type PipelineMode = "dop" | "bit-perfect" | "resampled" | "dsd" | "shared";
 
 export function pipelineMode(info: PlaybackPipelineInfo | null): PipelineMode | null {
   if (!info) return null;
+  // DoP : DSD natif au DAC (backend renvoyé par le chemin DoP).
+  if (info.backend === "WASAPI DoP") return "dop";
   if (info.intermediate_pcm_rate != null) return "dsd";
   if (info.resampler_active) return "resampled";
-  return "bit-perfect";
+  if (info.bit_perfect) return "bit-perfect";
+  return "shared";
 }
 
 export const playbackPipelineStore = writable<PlaybackPipelineInfo | null>(null);

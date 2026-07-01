@@ -37,6 +37,13 @@
   );
 
   let isDsd = $derived(info.intermediate_pcm_rate != null);
+  let backendLabel = $derived(info.backend ?? "CPAL shared");
+  let isWasapiExclusive = $derived(backendLabel.startsWith("WASAPI"));
+  // DoP : DSD envoyé natif au DAC (backend spécifique du chemin DoP).
+  let isDop = $derived(info.backend === "WASAPI DoP");
+  // Bit-perfect « classique » (PCM) : on garde le badge vert, mais pas en DoP
+  // (le DoP a sa propre bannière violette « DSD natif »).
+  let isBitPerfect = $derived(info.bit_perfect === true && !isDop);
 </script>
 
 <!-- Popover : positionné par le parent en absolute -->
@@ -47,6 +54,35 @@
          text-neutral-700 dark:text-neutral-300
          p-4 w-72"
 >
+  <!-- ── Bannière DSD natif (DoP) : le flux DSD sort tel quel au DAC ── -->
+  {#if isDop}
+    <div class="mb-3 -mt-1 px-2.5 py-2 rounded-md
+                bg-purple-50 border border-purple-200
+                dark:bg-purple-500/10 dark:border-purple-400/25">
+      <div class="flex items-center gap-1.5">
+        <Icon icon="lucide:badge-check" width={13} class="text-purple-600 dark:text-purple-400" />
+        <span class="text-[11px] font-semibold text-purple-700 dark:text-purple-300">
+          {$t("pipeline.dop_title")}
+        </span>
+      </div>
+      <p class="mt-1 text-[10px] leading-snug text-purple-600/90 dark:text-purple-300/80">
+        {$t("pipeline.dop_desc")}
+      </p>
+    </div>
+  {/if}
+
+  <!-- ── Badge Bit-perfect (WASAPI exclusive PCM + pas de resampling) ── -->
+  {#if isBitPerfect}
+    <div class="mb-3 -mt-1 flex items-center gap-1.5 px-2 py-1.5 rounded-md
+                bg-emerald-50 border border-emerald-200
+                dark:bg-emerald-500/10 dark:border-emerald-400/20">
+      <Icon icon="lucide:shield-check" width={13} class="text-emerald-600 dark:text-emerald-400" />
+      <span class="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+        {$t("pipeline.badge_bit_perfect")}
+      </span>
+    </div>
+  {/if}
+
   <!-- ── Source ── -->
   <div class="mb-3">
     <p class="text-[10px] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-1.5 flex items-center gap-1">
@@ -87,6 +123,22 @@
     </div>
   {/if}
 
+  <!-- ── Chemin DoP (DSD natif, aucune conversion) ── -->
+  {#if isDop}
+    <div class="mb-3 pt-3 border-t border-neutral-100 dark:border-white/5">
+      <p class="text-[10px] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-1.5 flex items-center gap-1">
+        <Icon icon="lucide:arrow-right-left" width={11} />
+        {$t("pipeline.transport")}
+      </p>
+      <p class="font-mono text-neutral-800 dark:text-neutral-200">
+        {info.source_format} → DoP {formatRate(info.output_sample_rate)}
+      </p>
+      <p class="text-neutral-500 dark:text-neutral-400 mt-0.5">
+        {$t("pipeline.dop_transport_hint")}
+      </p>
+    </div>
+  {/if}
+
   <!-- ── Resampling ── -->
   {#if info.resampler_active}
     <div class="mb-3 pt-3 border-t border-neutral-100 dark:border-white/5">
@@ -111,6 +163,24 @@
     </p>
     <p class="text-neutral-500 dark:text-neutral-400 mt-0.5">
       {formatRate(info.output_sample_rate)} · {channelsLabel(info.output_channels)}
+    </p>
+    <p class="mt-1 flex items-center gap-1">
+      <Icon
+        icon={isDop ? "lucide:badge-check" : isWasapiExclusive ? "lucide:audio-lines" : "lucide:volume-2"}
+        width={11}
+        class={isDop
+          ? "text-purple-500 dark:text-purple-400"
+          : isWasapiExclusive
+          ? "text-amber-500 dark:text-amber-400"
+          : "text-neutral-400 dark:text-neutral-500"}
+      />
+      <span class={isDop
+        ? "text-purple-600 dark:text-purple-300 font-medium"
+        : isWasapiExclusive
+        ? "text-amber-600 dark:text-amber-300 font-medium"
+        : "text-neutral-500 dark:text-neutral-400"}>
+        {isDop ? $t("pipeline.dop_backend") : backendLabel}
+      </span>
     </p>
   </div>
 

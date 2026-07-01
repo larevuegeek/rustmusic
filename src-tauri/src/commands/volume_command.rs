@@ -71,21 +71,21 @@ pub async fn get_devices() -> Result<Vec<String>, String> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for device in output_devices {
-        let raw_name = device.name().unwrap_or_default();
+        // CPAL 0.18 : `Device::name()` supprimé → on passe par `description()`.
+        let desc = match device.description() {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        let raw_name = desc.name().to_string();
 
         if is_alsa_virtual_device(&raw_name) {
             continue;
         }
 
-        let display_name = if let Ok(desc) = device.description() {
-            let name = desc.name().to_string();
-            match (desc.manufacturer(), desc.driver()) {
-                (Some(mfr), _) => format!("{} ({})", name, mfr),
-                (_, Some(drv)) => format!("{} ({})", name, drv),
-                _ => name,
-            }
-        } else {
-            raw_name.clone()
+        let display_name = match (desc.manufacturer(), desc.driver()) {
+            (Some(mfr), _) => format!("{} ({})", raw_name, mfr),
+            (_, Some(drv)) => format!("{} ({})", raw_name, drv),
+            _ => raw_name.clone(),
         };
 
         if seen.insert(display_name.clone()) {

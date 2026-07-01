@@ -31,6 +31,10 @@ use crate::commands::media_controls_command::{
     disable_media_controls, enable_media_controls, is_media_controls_active,
     update_media_metadata, update_media_playback,
 };
+use crate::commands::wasapi_command::{
+    set_dop_preference, set_wasapi_exclusive_preference, wasapi_default_device_name,
+    wasapi_list_output_devices, wasapi_probe_device_capabilities, wasapi_test_format_negotiation,
+};
 use crate::core::audio_player::audio_player::AudioPlayer;
 use crate::helper::database::sqlite::{get_database_url};
 use crate::state::AppState;
@@ -234,8 +238,11 @@ pub async fn run() {
         ))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
-        // TODO: réactiver quand rustmusic.dev est en ligne
-        // .plugin(tauri_plugin_updater::Builder::new().build())
+        // Auto-updater : interroge rustmusic.dev/api/releases pour vérifier
+        // s'il y a une version plus récente que la version locale. Côté
+        // frontend, la vérification est déclenchée au démarrage dans
+        // +layout.svelte → bannière de mise à jour si dispo.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // ─── SYSTEM TRAY ───────────────────────────────────
             // Crée une icône dans la zone de notification (systray)
@@ -293,6 +300,7 @@ pub async fn run() {
             get_volume,
             set_volume,
             get_devices,
+            crate::commands::device_command::get_output_devices,
             set_device,
             save_thumbnail,
             add_directory,
@@ -384,6 +392,12 @@ pub async fn run() {
             is_media_controls_active,
             update_media_metadata,
             update_media_playback,
+            wasapi_list_output_devices,
+            wasapi_default_device_name,
+            wasapi_test_format_negotiation,
+            wasapi_probe_device_capabilities,
+            set_wasapi_exclusive_preference,
+            set_dop_preference,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

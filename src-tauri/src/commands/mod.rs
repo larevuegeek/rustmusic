@@ -12,3 +12,5 @@ pub mod dlna_command;
 pub mod audio_command;
 pub mod system_command;
 pub mod media_controls_command;
+pub mod wasapi_command;
+pub mod device_command;

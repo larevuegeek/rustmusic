@@ -8,6 +8,7 @@ import QueuePanel from "$lib/components/queue/QueuePanel.svelte";
 import Icon from "@iconify/svelte";
 import SearchAutocomplete from "$lib/components/search/SearchAutocomplete.svelte";
 import Toast from "$lib/components/ui/toast/Toast.svelte";
+import UpdateBanner from "$lib/components/updater/UpdateBanner.svelte";
 import { onMount } from "svelte";
 import { get } from "svelte/store";
 import { invoke } from "@tauri-apps/api/core";
@@ -34,6 +35,14 @@ import { onDestroy } from "svelte";
 import { page } from "$app/state";
 import SelectionBar from "$lib/components/ui/selection/SelectionBar.svelte";
 import { fade } from "svelte/transition";
+import type { Snippet } from "svelte";
+
+let { children }: { children: Snippet } = $props();
+
+// Sur /settings : mode pleine page — on cache la sidebar app + la barre de
+// recherche pour laisser Paramètres prendre toute la largeur. Le Player en
+// bas reste visible pour continuer à contrôler la lecture.
+let isFullPageRoute = $derived(page.url.pathname.startsWith('/settings'));
 
 onMount(async () => {
   await profilSelector.init();
@@ -63,6 +72,17 @@ onMount(async () => {
   // le démarrage si l'OS refuse (Linux sans D-Bus, etc.).
   mediaControlsService.sync().catch((e) => console.warn('[smtc] sync init failed:', e));
 
+  // WASAPI exclusive — pousser la valeur persistée vers l'atomic global Rust
+  // dès le boot pour que le 1er morceau lu utilise déjà la bonne sortie.
+  try {
+    const wasapiOn = settingsStore.get('wasapi_exclusive') === 'true';
+    await invoke('set_wasapi_exclusive_preference', { enabled: wasapiOn });
+    const dopOn = settingsStore.get('dsd_dop') === 'true';
+    await invoke('set_dop_preference', { enabled: dopOn });
+  } catch (e) {
+    console.warn('[settings] WASAPI/DoP preference init failed:', e);
+  }
+
   // Le `playback-preparing` event est désormais écouté par taskProgressStore
   // (déjà init plus haut), pas besoin d'un listener dédié.
 
@@ -76,13 +96,11 @@ onMount(async () => {
     }
   }
 
-  // Auto-update désactivé tant que rustmusic.dev n'est pas en ligne
-  // Décommenter quand le site est déployé :
-  // import('@tauri-apps/plugin-updater').then(({ check }) => {
-  //   check().then(update => {
-  //     if (update) console.log(`[updater] v${update.version} disponible`);
-  //   }).catch(() => {});
-  // }).catch(() => {});
+  // Auto-update : vérifie en silence 5s après le démarrage (anti cold-start
+  // slow). Si une update est dispo, le store updaterState passe en
+  // "available" et UpdateBanner s'affiche en bas à droite.
+  const { initUpdaterAutoCheck } = await import('$lib/services/updater/updater.service');
+  initUpdaterAutoCheck(5000);
 });
 
 onDestroy(() => {
@@ -157,7 +175,7 @@ function handleKeydown(e: KeyboardEvent) {
     <!-- ═══ SIDEBAR : fixe sur desktop, overlay sur mobile ═══ -->
 
     <!-- Backdrop mobile (ferme la sidebar au clic) -->
-    {#if $sidebarStore.open}
+    {#if $sidebarStore.open && !isFullPageRoute}
       <button
         type="button"
         class="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm cursor-default
@@ -167,18 +185,21 @@ function handleKeydown(e: KeyboardEvent) {
       ></button>
     {/if}
 
-    <!-- Sidebar -->
-    <div class="
-      fixed md:relative z-40 md:z-auto
-      h-full
-      transition-transform duration-300 ease-out
-      {$sidebarStore.open ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-    ">
-      <Sidebar />
-    </div>
+    <!-- Sidebar app (cachée en mode pleine page /settings) -->
+    {#if !isFullPageRoute}
+      <div class="
+        fixed md:relative z-40 md:z-auto
+        h-full
+        transition-transform duration-300 ease-out
+        {$sidebarStore.open ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      ">
+        <Sidebar />
+      </div>
+    {/if}
 
     <!-- ═══ CONTENU PRINCIPAL ═══ -->
     <div class="grow overflow-hidden flex flex-col min-w-0">
+      {#if !isFullPageRoute}
       <header class="p-3 md:p-5 shrink-0">
         <div class="flex items-center justify-between gap-2 md:gap-4">
           <div class="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
@@ -243,12 +264,13 @@ function handleKeydown(e: KeyboardEvent) {
           </div>
         </div>
       </header>
+      {/if}
 
       <!-- Contenu scrollable avec transition -->
       <div class="flex-1 overflow-hidden">
         {#key page.url.pathname}
           <div class="h-full" in:fade={{ duration: 120, delay: 60 }}>
-            <slot />
+            {@render children()}
           </div>
         {/key}
       </div>
@@ -259,6 +281,7 @@ function handleKeydown(e: KeyboardEvent) {
   <QueuePanel />
   <SelectionBar />
   <Toast />
+  <UpdateBanner />
   <Popin />
   <ProfilSelectorPopin />
 </main>

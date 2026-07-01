@@ -193,16 +193,51 @@ pub async fn auto_start_if_enabled(state: &AppState) {
 
     log::debug!("DLNA auto-start: launching server (enabled in settings)");
     let config = build_config(&settings);
+    let port = config.port;
     let provider: Arc<dyn LibraryProvider> = Arc::new(SqliteLibraryProvider::new(
         Arc::new(state.pool.clone()),
     ));
     let mut server = DlnaServer::new(config, provider);
     if let Err(e) = server.start().await {
-        log::error!("DLNA auto-start failed: {e}");
+        log_dlna_start_failure(&e, port);
         return;
     }
     *state.dlna_server.lock().await = Some(server);
     log::debug!("DLNA server running");
+}
+
+/// Log d'erreur enrichi : identifie la cause probable et propose des solutions.
+/// L'erreur la plus fréquente est `EADDRINUSE` (port occupé), qui peut être due
+/// à : (1) une instance précédente de l'app mal fermée, (2) un autre serveur
+/// DLNA déjà actif (Plex, Jellyfin, MiniDLNA, Windows Media Player Network
+/// Sharing Service), (3) un processus quelconque qui squatte le port.
+fn log_dlna_start_failure(err: &crate::core::dlna_server::error::DlnaError, port: u16) {
+    use crate::core::dlna_server::error::DlnaError;
+    let msg = format!("{err}");
+
+    // Détection portable de EADDRINUSE (Windows = 10048, Unix = 98).
+    // On regarde aussi le texte pour les wrappers qui n'exposent pas le code.
+    let is_addr_in_use = matches!(err, DlnaError::Io(e) if e.kind() == std::io::ErrorKind::AddrInUse)
+        || msg.contains("10048")
+        || msg.contains("Address in use")
+        || msg.contains("address already in use");
+
+    if is_addr_in_use {
+        log::error!(
+            "DLNA auto-start: port {port} déjà utilisé.\n\
+             Causes possibles :\n\
+             • Une instance précédente de RustMusic est encore en cours d'exécution.\n\
+             • Un autre serveur DLNA tourne sur ta machine (Plex, Jellyfin, MiniDLNA,\n\
+               Windows Media Player Network Sharing).\n\
+             • Un autre processus écoute sur ce port.\n\
+             Solutions :\n\
+             • Vérifier les apps en cours (Gestionnaire de tâches Windows / ps -ef).\n\
+             • Changer le port dans Réglages → Réseau → Port HTTP.\n\
+             • Désactiver l'auto-start DLNA dans les réglages."
+        );
+    } else {
+        log::error!("DLNA auto-start failed: {msg}");
+    }
 }
 
 /// Update friendly name and/or port. If the server is currently running,

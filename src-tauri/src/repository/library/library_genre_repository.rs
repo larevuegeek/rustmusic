@@ -1,5 +1,4 @@
 use sqlx::SqlitePool;
-use crate::entity::library::genre_view::GenreView;
 
 pub struct LibraryGenreRepository;
 

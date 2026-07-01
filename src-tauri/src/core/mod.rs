@@ -2,9 +2,12 @@ pub mod audio_player {
     pub mod audio_player;
     pub mod audio_utils;
     pub mod pipeline_info;
-    //pub mod output_cpal;
-    //pub mod output;
-    //pub mod resampler;
+    // WASAPI exclusive mode — Windows only. Sur les autres OS le module est
+    // entièrement skipped grâce au `#![cfg(target_os = "windows")]` interne.
+    #[cfg(target_os = "windows")]
+    pub mod audio_output_wasapi;
+    // Backends de sortie audio abstraits derrière le trait `AudioOutput`.
+    pub mod output;
 }
 
 pub mod audio_analyser {
@@ -47,6 +50,7 @@ pub mod audio_decoder {
         pub mod dsd_player;
         pub mod dff_decoder;
         pub mod dsf_decoder;
+        pub mod dop_encoder;
     }
 }
 

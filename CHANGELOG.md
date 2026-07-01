@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.1.8] - 2026-07-01
+
+### Audio — WASAPI exclusive (Windows, bit-perfect)
+- Backend WASAPI exclusive event-driven : bypass complet du mixeur Windows, format natif envoyé au DAC (vraie sortie bit-perfect)
+- Pré-négociation du format sur le DAC ciblé AVANT le décodeur → le décodeur produit directement au rate natif (pas de resampling parasite ni de pitch faux)
+- Ciblage du device par nom complet « Nom (Fabricant) » — corrige le cas où plusieurs endpoints partagent le même nom brut (le mauvais DAC était sélectionné)
+- Le render WASAPI lit aussi le mode FullBuffer (comme CPAL) — corrige le silence total sur les profils qui basculent en pré-décodage
+- Pré-remplissage du buffer avant `start_stream` — supprime le clic de démarrage
+- Toggle WASAPI exclusive dans les Réglages ET dans le popup des sorties audio du player
+- Badge permanent dans la status bar : « WASAPI » (bit-perfect) ou « Standard » (mixeur Windows), cliquable vers les Réglages
+
+### Audio — DSD natif (DoP / DSD over PCM)
+- Nouveau : envoie les fichiers DSD (.dsf/.dff) **tels quels** au DAC compatible DoP, qui les décode nativement — plus de conversion DSD→PCM
+- Le DAC affiche « DSD » et reconstruit le flux 1-bit d'origine (bit-perfect). Porteur : DSD64→176.4 kHz, DSD128→352.8 kHz, DSD256→705.6 kHz
+- **Moteur DoP persistant (gapless)** : le stream WASAPI reste vivant entre les pistes DSD compatibles (silence DSD dans les intervalles) → le DAC ne se re-verrouille qu'une fois, les pistes suivantes démarrent instantanément sans clic
+- Warm-up au 1er morceau (le temps que le DAC verrouille le DSD) avec compteur figé → plus de début de morceau perdu
+- Fermeture automatique du moteur (libère le DAC) au passage vers un format non-DSD, un DSD incompatible, ou après 5 s d'inactivité
+- Fallback automatique et transparent vers DSD→PCM si le DAC refuse le format DoP
+- Volume logiciel grisé en DoP (bit-perfect oblige — le volume se règle sur le DAC/ampli)
+- Toggle « DSD natif (DoP) » dans les Réglages, badge « DSD natif » dans la status bar
+- Encodeur DoP maison : inversion de bits DSF (LSB-first), marqueurs 0x05/0xFA posés par le backend en continu (anti-clic aux jonctions)
+
+### Audio — Périphériques de sortie enrichis
+- Nouvelle énumération détaillée : fréquences supportées, formats d'échantillon, canaux, marqueur défaut système, détection Hi-Res (≥24-bit et ≥88.2 kHz)
+- Probing WASAPI par périphérique (Windows) : interroge directement le pilote pour connaître les capacités RÉELLES du DAC en exclusive (CPAL exposait la même table pour tous les endpoints)
+- Modal de détails par périphérique : identité, formats, fréquences groupées par catégorie (CD / Hi-Res / Studio / Ultra Hi-Res), format Windows par défaut, taille de buffer
+- Sélection de la sortie active depuis le player (badge Hi-Res, fréquence max) et depuis les Réglages
+- Carte « Périphériques de sortie » dans Réglages > Audio
+
+### UI — Refonte des Réglages
+- Passage en mode pleine page avec sidebar de navigation à gauche (Général / Apparence / Audio / Réseau & DLNA / Stockage / À propos)
+- Groupes « Préférences » et « Application », barre d'accent sur la section active, en-tête sticky avec titre + description par section
+- Section « À propos » désormais intégrée directement (plus de sous-page séparée)
+- Section Audio réorganisée : périphériques, WASAPI + DSD natif regroupés dans une carte hiérarchisée, qualité de décodage
+
+### UI — Player & pipeline
+- Popover pipeline enrichi : bannière bit-perfect / DSD natif, chaîne source → sortie, backend effectif, transport DoP
+- Info « source → sortie » affichée en permanence dans la status bar (couleur selon le mode : bit-perfect / DSD natif / standard / resamplé / DSD→PCM)
+- Modales portées vers le body (fix positionnement)
+
 ## [0.1.7] - 2026-05-21
 
 ### Audio — Profil de qualité de décodage

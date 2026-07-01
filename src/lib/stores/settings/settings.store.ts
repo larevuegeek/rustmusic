@@ -13,6 +13,8 @@ export type AppSettings = {
   hardware_acceleration: string;
   single_click_play: string;
   system_media_controls: string;     // 'true' | 'false' — SMTC / MPRIS / Now Playing
+  wasapi_exclusive: string;          // 'true' | 'false' — Windows uniquement, bit-perfect
+  dsd_dop: string;                   // 'true' | 'false' — DSD natif (DoP) via WASAPI exclusive
   theme: string;                     // 'auto' | 'light' | 'dark'
   window_controls_style: string;     // 'auto' | 'macos' | 'windows'
   window_controls_position: string;  // 'right' | 'left'
@@ -28,6 +30,8 @@ const defaults: AppSettings = {
   hardware_acceleration: 'true',
   single_click_play: 'false',
   system_media_controls: 'true',
+  wasapi_exclusive: 'false',
+  dsd_dop: 'false',
   theme: 'dark',
   window_controls_style: 'auto',
   window_controls_position: 'right',
@@ -68,6 +72,30 @@ const sideEffects: Partial<Record<keyof AppSettings, (value: string) => Promise<
       await mediaControlsService.sync();
     } catch (e) {
       console.error('[settings] Erreur sync SMTC:', e);
+    }
+  },
+
+  // WASAPI exclusive : pousse la préférence vers l'atomique global Rust qui
+  // sera lu par le thread de playback au prochain morceau lancé. Cette command
+  // est cross-OS — sur les non-Windows elle est no-op à l'intérieur du backend.
+  wasapi_exclusive: async (value: string) => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_wasapi_exclusive_preference', { enabled: value === 'true' });
+    } catch (e) {
+      console.error('[settings] Erreur sync WASAPI preference:', e);
+    }
+  },
+
+  // DSD natif (DoP) : pousse la préférence vers l'atomique global Rust, lu au
+  // prochain morceau DSD. Effet réel seulement si WASAPI exclusive actif +
+  // DAC compatible (sinon fallback DSD2PCM silencieux).
+  dsd_dop: async (value: string) => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_dop_preference', { enabled: value === 'true' });
+    } catch (e) {
+      console.error('[settings] Erreur sync DoP preference:', e);
     }
   },
 };

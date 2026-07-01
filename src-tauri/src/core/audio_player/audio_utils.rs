@@ -26,18 +26,26 @@ pub fn convert_audio_buffer_to_interleaved(
             }
         }
         AudioBufferRef::S16(buf) => {
-            // S16 est entre -32768..32767, on normalise en [-1.0, 1.0]
+            // i16 va de -32768 à +32767 (asymétrique). On divise par 32768
+            // (et NON 32767) pour mapper proprement :
+            //   -32768 → -1.0 exact (pas de clipping)
+            //   +32767 → +0.99997 (perte 0.003 dB sur le pic positif, inaudible)
+            // Avec /32767, le min -32768 produit -1.00003 → clippé par le clamp
+            // CPAL final → distorsion harmonique audible (souffle) sur les pics
+            // négatifs, fréquents en mastering "loudness war".
             for frame_idx in 0..frames {
                 for ch in 0..channels {
                     let sample: i16 = buf.chan(ch)[frame_idx];
-                    // Convertir -32768..32767 -> -1.0..1.0
-                    let normalized: f32 = sample as f32 / 32767.0;
+                    let normalized: f32 = sample as f32 / 32768.0;
                     samples.push(normalized);
                 }
             }
         }
         AudioBufferRef::S32(buf) => {
-            // S32 est entre -2147483648..2147483647
+            // i32 va de -2_147_483_648 à +2_147_483_647. On divise par 2^31
+            // (2_147_483_648) pour mapper le min en -1.0 exact (idem S16).
+            // Pour les FLAC 24-bit symphonia remplit les 24 bits hauts (les 8 bits
+            // bas sont à zéro), donc le max effectif est 0x7FFFFF00 → ~0.99999.
             for frame_idx in 0..frames {
                 for ch in 0..channels {
                     let sample: i32 = buf.chan(ch)[frame_idx];

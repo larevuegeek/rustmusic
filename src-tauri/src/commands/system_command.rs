@@ -8,7 +8,6 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::core::render_mode::RenderMode;
-use crate::core::system_detect;
 use crate::repository::settings::settings_repository::SettingsRepository;
 use crate::state::AppState;
 

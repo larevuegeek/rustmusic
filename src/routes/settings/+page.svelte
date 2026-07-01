@@ -1,14 +1,16 @@
 <script lang="ts">
   import Icon from "@iconify/svelte";
-  import { goto } from "$app/navigation";
   import { invoke } from "@tauri-apps/api/core";
   import { openPath } from "@tauri-apps/plugin-opener";
   import { appDataDir } from "@tauri-apps/api/path";
   import { settingsStore } from "$lib/stores/settings/settings.store";
   import { libraryStore } from "$lib/stores/library/library.store";
   import { t } from "$lib/i18n";
+  import { detectOS } from "$lib/helper/tools/osDetection";
   import ResetConfirmPopin from "$lib/components/settings/ResetConfirmPopin.svelte";
   import AppearanceCard from "$lib/components/settings/AppearanceCard.svelte";
+  import AudioDevicesCard from "$lib/components/settings/AudioDevicesCard.svelte";
+  import AboutContent from "$lib/components/settings/AboutContent.svelte";
   import {
     dlnaGetSettings,
     dlnaStart,
@@ -206,6 +208,49 @@
   let singleClickPlay = $derived($settingsStore.single_click_play === 'true');
   let notifications = $derived($settingsStore.show_notifications === 'true');
   let systemMediaControls = $derived($settingsStore.system_media_controls === 'true');
+  let wasapiExclusive = $derived($settingsStore.wasapi_exclusive === 'true');
+  let dsdDop = $derived($settingsStore.dsd_dop === 'true');
+  let isWindows = $derived(detectOS() === 'windows');
+
+  // ─── Test WASAPI ──────────────────────────────────────────────────────
+  // Bouton "Tester" qui exécute la cascade de format negotiation pour les
+  // rates audio courants. Permet de vérifier si le DAC supporte WASAPI
+  // exclusive AVANT d'activer le toggle pour la lecture.
+  type WasapiTestRow = { rate: number; status: "ok" | "fail"; message: string };
+  let wasapiTesting = $state(false);
+  let wasapiDeviceName = $state<string | null>(null);
+  let wasapiResults = $state<WasapiTestRow[] | null>(null);
+
+  async function runWasapiTest() {
+    wasapiTesting = true;
+    wasapiResults = null;
+    wasapiDeviceName = null;
+    try {
+      wasapiDeviceName = await invoke<string>("wasapi_default_device_name");
+    } catch (e) {
+      wasapiDeviceName = `Erreur device : ${e}`;
+    }
+
+    const rates = [44100, 48000, 88200, 96000, 176400, 192000];
+    const rows: WasapiTestRow[] = [];
+    for (const rate of rates) {
+      try {
+        const r = await invoke<{ sample_rate: number; bits_per_sample: number; channels: number }>(
+          "wasapi_test_format_negotiation",
+          { sourceRate: rate, channels: 2 },
+        );
+        rows.push({
+          rate,
+          status: "ok",
+          message: `${r.sample_rate} Hz · ${r.bits_per_sample}-bit · ${r.channels} ch`,
+        });
+      } catch (e) {
+        rows.push({ rate, status: "fail", message: String(e) });
+      }
+    }
+    wasapiResults = rows;
+    wasapiTesting = false;
+  }
   let theme = $derived($settingsStore.theme);
   let windowControlsStyle = $derived($settingsStore.window_controls_style);
   let windowControlsPosition = $derived($settingsStore.window_controls_position);
@@ -215,39 +260,152 @@
     { value: 'en', label: 'English' },
     { value: 'es', label: 'Español' },
     { value: 'de', label: 'Deutsch' },
+    { value: 'it', label: 'Italiano' },
   ];
+
+  // ─── Navigation par sections (sidebar left) ───
+  type SectionId = 'general' | 'appearance' | 'audio' | 'network' | 'storage' | 'about';
+  type SectionMeta = {
+    id: SectionId;
+    icon: string;
+    labelKey: string;
+    descKey: string;
+    group: 'preferences' | 'app';
+  };
+  const sections: SectionMeta[] = [
+    { id: 'general',    icon: 'lucide:settings',   labelKey: 'settings.general',    descKey: 'settings.general_desc',    group: 'preferences' },
+    { id: 'appearance', icon: 'lucide:paintbrush', labelKey: 'settings.appearance', descKey: 'settings.appearance_desc', group: 'preferences' },
+    { id: 'audio',      icon: 'lucide:speaker',    labelKey: 'settings.audio',      descKey: 'settings.audio_desc',      group: 'preferences' },
+    { id: 'network',    icon: 'lucide:network',    labelKey: 'settings.network',    descKey: 'settings.network_desc',    group: 'preferences' },
+    { id: 'storage',    icon: 'lucide:hard-drive', labelKey: 'settings.storage',    descKey: 'settings.storage_desc',    group: 'app' },
+    { id: 'about',      icon: 'lucide:info',       labelKey: 'settings.about',      descKey: 'settings.about_desc',      group: 'app' },
+  ];
+  let activeSection: SectionId = $state('general');
+  let activeSectionMeta = $derived(sections.find((s) => s.id === activeSection)!);
 
 </script>
 
-<div class="py-6 px-4 md:px-10 scrollbar-app overflow-y-auto" style="height: calc(100vh - 290px);">
+<div class="flex h-full">
 
-  <!-- Header -->
-  <div class="flex items-center gap-3 mb-8">
-    <button
-      class="w-8 h-8 flex items-center justify-center rounded-lg cursor-pointer
-             text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200
-             hover:bg-neutral-100 dark:hover:bg-neutral-800
-             transition-all"
-      onclick={() => history.back()}
-    >
-      <Icon icon="lucide:arrow-left" width="16" />
-    </button>
-    <div>
-      <h1 class="text-2xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
-        {$t('settings.title')}
+  <!-- ═══ SIDEBAR ═══ -->
+  <aside class="shrink-0 w-64 border-r border-neutral-200/70 dark:border-white/8
+                bg-linear-to-b from-neutral-50/80 to-neutral-100/40
+                dark:from-white/2 dark:to-transparent
+                overflow-y-auto scrollbar-app flex flex-col">
+    <!-- Header sidebar -->
+    <div class="px-5 pt-7 pb-6 flex items-center gap-3">
+      <button
+        class="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg cursor-pointer
+               text-neutral-500 hover:text-neutral-800 dark:text-neutral-400 dark:hover:text-neutral-100
+               bg-white/60 dark:bg-white/5 border border-neutral-200/70 dark:border-white/10
+               hover:bg-white dark:hover:bg-white/10
+               shadow-sm shadow-black/5 transition-all"
+        onclick={() => history.back()}
+        aria-label="Retour"
+        title="Retour"
+      >
+        <Icon icon="lucide:arrow-left" width="15" />
+      </button>
+      <div class="min-w-0">
+        <h1 class="text-[15px] font-bold tracking-tight text-neutral-900 dark:text-neutral-50 leading-tight">
+          {$t('settings.title')}
+        </h1>
+        <p class="text-[10px] text-neutral-400 dark:text-neutral-500 mt-0.5 tracking-wide">
+          RustMusic
+        </p>
+      </div>
+    </div>
+
+    <!-- Nav sections -->
+    <nav class="flex-1 px-3 pb-5 space-y-6">
+      <!-- Groupe : Préférences -->
+      <div class="space-y-0.5">
+        <p class="px-3 mb-2 text-[9px] font-semibold uppercase tracking-widest text-neutral-400 dark:text-neutral-500">
+          {$t('settings.group_preferences')}
+        </p>
+        {#each sections.filter((s) => s.group === 'preferences') as section}
+          {@const isActive = activeSection === section.id}
+          <button
+            class="relative w-full flex items-center gap-3 pl-3.5 pr-3 py-2.5 rounded-lg text-sm cursor-pointer
+                   transition-all text-left
+                   {isActive
+                     ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-medium shadow-sm shadow-emerald-500/5'
+                     : 'text-neutral-600 dark:text-neutral-300 hover:bg-white dark:hover:bg-white/5 hover:text-neutral-900 dark:hover:text-neutral-100'}"
+            onclick={() => (activeSection = section.id)}
+          >
+            {#if isActive}
+              <span class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 rounded-r-full bg-emerald-500"></span>
+            {/if}
+            <Icon
+              icon={section.icon}
+              width="16"
+              class={isActive ? '' : 'text-neutral-400 dark:text-neutral-500'}
+            />
+            <span>{$t(section.labelKey)}</span>
+          </button>
+        {/each}
+      </div>
+
+      <!-- Groupe : Application -->
+      <div class="space-y-0.5">
+        <p class="px-3 mb-2 text-[9px] font-semibold uppercase tracking-widest text-neutral-400 dark:text-neutral-500">
+          {$t('settings.group_app')}
+        </p>
+        {#each sections.filter((s) => s.group === 'app') as section}
+          {@const isActive = activeSection === section.id}
+          <button
+            class="relative w-full flex items-center gap-3 pl-3.5 pr-3 py-2.5 rounded-lg text-sm cursor-pointer
+                   transition-all text-left
+                   {isActive
+                     ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-medium shadow-sm shadow-emerald-500/5'
+                     : 'text-neutral-600 dark:text-neutral-300 hover:bg-white dark:hover:bg-white/5 hover:text-neutral-900 dark:hover:text-neutral-100'}"
+            onclick={() => (activeSection = section.id)}
+          >
+            {#if isActive}
+              <span class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 rounded-r-full bg-emerald-500"></span>
+            {/if}
+            <Icon
+              icon={section.icon}
+              width="16"
+              class={isActive ? '' : 'text-neutral-400 dark:text-neutral-500'}
+            />
+            <span>{$t(section.labelKey)}</span>
+          </button>
+        {/each}
+      </div>
+    </nav>
+
+    <!-- Footer sidebar : version -->
+    <div class="px-5 py-4 border-t border-neutral-200/60 dark:border-white/5
+                text-[10px] text-neutral-400 dark:text-neutral-500 flex items-center gap-1.5">
+      <Icon icon="lucide:tag" width="10" />
+      <span>v0.1.7</span>
+    </div>
+  </aside>
+
+  <!-- ═══ CONTENU ═══ -->
+  <div class="flex-1 overflow-y-auto scrollbar-app">
+
+  <!-- Page header sticky -->
+  <div class="sticky top-0 z-10 backdrop-blur-md
+              bg-white/70 dark:bg-neutral-950/70
+              border-b border-neutral-200/60 dark:border-white/5
+              px-8 md:px-12 py-6">
+    <div class="max-w-3xl">
+      <h1 class="text-2xl font-bold tracking-tight text-neutral-900 dark:text-neutral-50">
+        {$t(activeSectionMeta.labelKey)}
       </h1>
-      <div class="mt-1 h-0.5 w-10 rounded-full bg-green-500"></div>
+      <p class="text-[13px] text-neutral-500 dark:text-neutral-400 mt-1">
+        {$t(activeSectionMeta.descKey)}
+      </p>
     </div>
   </div>
 
-  <div class="space-y-8">
+  <div class="px-8 md:px-12 py-8 max-w-3xl">
 
     <!-- ═══ GÉNÉRAL ═══ -->
+    {#if activeSection === 'general'}
     <section>
-      <h2 class="text-xs font-semibold uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-4">
-        {$t('settings.general')}
-      </h2>
-
       <div class="space-y-1">
         <!-- Langue -->
         <div class="flex items-center justify-between px-4 py-3 rounded-xl
@@ -409,15 +567,11 @@
       </div>
     </section>
 
-    <!-- Séparateur -->
-    <div class="h-px bg-linear-to-r from-transparent via-neutral-200/80 dark:via-neutral-700/30 to-transparent"></div>
+    {/if}
 
     <!-- ═══ APPARENCE ═══ -->
+    {#if activeSection === 'appearance'}
     <section>
-      <h2 class="text-xs font-semibold uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-4">
-        {$t('settings.appearance')}
-      </h2>
-
       <!-- ─── Thème ─── -->
       <div class="mb-5">
         <div class="flex items-center gap-3 mb-2.5 px-1">
@@ -640,16 +794,148 @@
       {/if}
     </section>
 
-    <!-- Séparateur -->
-    <div class="h-px bg-linear-to-r from-transparent via-neutral-200/80 dark:via-neutral-700/30 to-transparent"></div>
+    {/if}
 
     <!-- ═══ AUDIO (qualité de décodage) ═══ -->
+    {#if activeSection === 'audio'}
     <section>
-      <h2 class="text-xs font-semibold uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-4">
-        {$t('settings.audio')}
-      </h2>
+      <!-- Périphériques de sortie détectés (fréquences + formats supportés) -->
+      <AudioDevicesCard />
 
-      <div class="mb-2">
+      <!-- ── Sortie bit-perfect (WASAPI + DoP) — Windows uniquement ── -->
+      {#if isWindows}
+        <div class="mt-8 mb-2 rounded-2xl border border-neutral-200/70 dark:border-white/8
+                    bg-neutral-50/40 dark:bg-white/2 overflow-hidden">
+
+          <!-- Ligne principale : WASAPI exclusive -->
+          <div class="flex items-center gap-3.5 px-4 py-3.5">
+            <div class="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center
+                        {wasapiExclusive ? 'bg-amber-500/15 text-amber-500 dark:text-amber-400' : 'bg-neutral-200/60 dark:bg-white/5 text-neutral-400'}">
+              <Icon icon="lucide:audio-lines" width="18" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-neutral-800 dark:text-neutral-200 flex items-center gap-1.5">
+                {$t('settings.wasapi_exclusive')}
+                <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/20 uppercase tracking-wider">Beta</span>
+              </p>
+              <p class="text-[11px] text-neutral-400 dark:text-neutral-500 mt-0.5">
+                {wasapiExclusive
+                  ? $t('settings.wasapi_exclusive_on_hint')
+                  : $t('settings.wasapi_exclusive_desc')}
+              </p>
+            </div>
+            <button
+              class="relative w-10 h-6 rounded-full cursor-pointer transition-colors duration-200 shrink-0
+                     {wasapiExclusive ? 'bg-amber-500' : 'bg-neutral-300 dark:bg-neutral-700'}"
+              aria-label="WASAPI exclusive"
+              onclick={() => settingsStore.toggle('wasapi_exclusive')}
+            >
+              <div class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200
+                          {wasapiExclusive ? 'translate-x-4' : ''}"></div>
+            </button>
+          </div>
+
+          {#if wasapiExclusive}
+            <!-- Note exclusive (discrète) -->
+            <div class="px-4 pb-3 -mt-1">
+              <p class="flex items-start gap-1.5 text-[10.5px] text-amber-600/90 dark:text-amber-300/70 leading-relaxed">
+                <Icon icon="lucide:info" width="12" class="shrink-0 mt-0.5" />
+                <span>{$t('settings.wasapi_exclusive_warning')}</span>
+              </p>
+            </div>
+
+            <!-- Sous-item NESTED : DSD natif (DoP) — enfant de WASAPI -->
+            <div class="border-t border-neutral-200/60 dark:border-white/5
+                        bg-neutral-100/40 dark:bg-black/15">
+              <div class="flex items-center gap-3.5 pl-8 pr-4 py-3.5 relative">
+                <!-- Trait de hiérarchie -->
+                <span class="absolute left-4 top-0 bottom-0 w-px bg-purple-400/40"></span>
+                <div class="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center
+                            {dsdDop ? 'bg-purple-500/15 text-purple-500 dark:text-purple-400' : 'bg-neutral-200/60 dark:bg-white/5 text-neutral-400'}">
+                  <Icon icon="lucide:badge-check" width="16" />
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-medium text-neutral-800 dark:text-neutral-200">
+                    {$t('settings.dsd_dop')}
+                  </p>
+                  <p class="text-[11px] text-neutral-400 dark:text-neutral-500 mt-0.5">
+                    {$t('settings.dsd_dop_desc')}
+                  </p>
+                </div>
+                <button
+                  class="relative w-10 h-6 rounded-full cursor-pointer transition-colors duration-200 shrink-0
+                         {dsdDop ? 'bg-purple-500' : 'bg-neutral-300 dark:bg-neutral-700'}"
+                  aria-label="DSD natif DoP"
+                  onclick={() => settingsStore.toggle('dsd_dop')}
+                >
+                  <div class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200
+                              {dsdDop ? 'translate-x-4' : ''}"></div>
+                </button>
+              </div>
+
+              {#if dsdDop}
+                <div class="pl-8 pr-4 pb-3.5 -mt-1 relative">
+                  <span class="absolute left-4 top-0 bottom-0 w-px bg-purple-400/40"></span>
+                  <p class="flex items-start gap-1.5 text-[10.5px] text-purple-600/90 dark:text-purple-300/75 leading-relaxed">
+                    <Icon icon="lucide:info" width="12" class="shrink-0 mt-0.5" />
+                    <span>{$t('settings.dsd_dop_warning')}</span>
+                  </p>
+                </div>
+              {/if}
+            </div>
+
+            <!-- Panel de test WASAPI (diagnostic DAC) -->
+            <div class="border-t border-neutral-200/60 dark:border-white/5 px-4 py-3">
+              <div class="flex items-center justify-between gap-3 mb-2">
+                <div class="flex items-center gap-2 text-[11px] font-medium text-neutral-600 dark:text-neutral-300">
+                  <Icon icon="lucide:flask-conical" width="13" />
+                  Test compatibilité DAC
+                </div>
+                <button
+                  onclick={runWasapiTest}
+                  disabled={wasapiTesting}
+                  class="px-3 py-1 rounded-md text-[11px] font-medium
+                         bg-neutral-900/8 hover:bg-neutral-900/12 dark:bg-white/5 dark:hover:bg-white/10
+                         text-neutral-800 dark:text-neutral-200
+                         disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                >
+                  {wasapiTesting ? '…' : 'Tester'}
+                </button>
+              </div>
+
+              {#if wasapiDeviceName}
+                <p class="text-[10.5px] text-neutral-600 dark:text-neutral-400 mb-2 font-mono truncate">
+                  {wasapiDeviceName}
+                </p>
+              {/if}
+
+              {#if wasapiResults}
+                <div class="grid grid-cols-2 gap-1">
+                  {#each wasapiResults as row}
+                    <div class="flex items-center gap-1.5 text-[10.5px] font-mono">
+                      {#if row.status === 'ok'}
+                        <Icon icon="lucide:check-circle-2" width={11} class="text-emerald-500 shrink-0" />
+                        <span class="text-neutral-700 dark:text-neutral-300">{row.rate} Hz</span>
+                        <span class="text-emerald-600 dark:text-emerald-400 truncate">→ {row.message}</span>
+                      {:else}
+                        <Icon icon="lucide:x-circle" width={11} class="text-rose-500 shrink-0" />
+                        <span class="text-neutral-500 dark:text-neutral-500">{row.rate} Hz</span>
+                        <span class="text-rose-500/80 truncate" title={row.message}>rejeté</span>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {:else if !wasapiTesting}
+                <p class="text-[10.5px] text-neutral-500 leading-relaxed">
+                  Vérifie quels sample rates ton DAC supporte en mode exclusive.
+                </p>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      <div class="mb-2 mt-8">
         <div class="flex items-center gap-3 mb-2.5 px-1">
           <Icon icon="lucide:gauge" width="18" class="text-neutral-400" />
           <div>
@@ -759,15 +1045,11 @@
       </div>
     </section>
 
-    <!-- Séparateur -->
-    <div class="h-px bg-linear-to-r from-transparent via-neutral-200/80 dark:via-neutral-700/30 to-transparent"></div>
+    {/if}
 
     <!-- ═══ RÉSEAU / DLNA ═══ -->
+    {#if activeSection === 'network'}
     <section>
-      <h2 class="text-xs font-semibold uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-4">
-        {$t('settings.network')}
-      </h2>
-
       <div class="space-y-1">
         <!-- Toggle ON/OFF -->
         <div class="flex items-center justify-between px-4 py-3 rounded-xl
@@ -873,15 +1155,11 @@
       </div>
     </section>
 
-    <!-- Séparateur -->
-    <div class="h-px bg-linear-to-r from-transparent via-neutral-200/80 dark:via-neutral-700/30 to-transparent"></div>
+    {/if}
 
     <!-- ═══ STOCKAGE ═══ -->
+    {#if activeSection === 'storage'}
     <section>
-      <h2 class="text-xs font-semibold uppercase tracking-widest text-neutral-400 dark:text-neutral-500 mb-4">
-        {$t('settings.storage')}
-      </h2>
-
       <div class="space-y-1">
         <div class="flex items-center justify-between px-4 py-3 rounded-xl
                     hover:bg-neutral-50 dark:hover:bg-white/2 transition-colors">
@@ -1002,22 +1280,15 @@
       </div>
     </section>
 
-    <!-- Séparateur -->
-    <div class="h-px bg-linear-to-r from-transparent via-neutral-200/80 dark:via-neutral-700/30 to-transparent"></div>
+    {/if}
 
-    <!-- Lien À propos -->
-    <button
-      class="flex items-center gap-3 px-4 py-3 rounded-xl w-full text-left cursor-pointer
-             hover:bg-neutral-50 dark:hover:bg-white/2 transition-colors"
-      onclick={() => goto('/settings/about')}
-    >
-      <Icon icon="lucide:info" width="18" class="text-neutral-400" />
-      <div class="flex-1">
-        <p class="text-sm font-medium text-neutral-800 dark:text-neutral-200">{$t('settings.about')}</p>
-        <p class="text-[11px] text-neutral-400 dark:text-neutral-500">{$t('settings.about_desc')}</p>
-      </div>
-      <Icon icon="lucide:chevron-right" width="14" class="text-neutral-300 dark:text-neutral-600" />
-    </button>
+    <!-- ═══ À PROPOS ═══ -->
+    {#if activeSection === 'about'}
+    <section>
+      <AboutContent />
+    </section>
+    {/if}
+  </div>
   </div>
 </div>
 
