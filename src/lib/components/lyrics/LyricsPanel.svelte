@@ -29,6 +29,38 @@ let activeIndex = $derived(
     syncedLines.length > 0 ? findActiveLineIndex(syncedLines, currentMs) : -1
 );
 
+// ─── Fix carré noir WebKitGTK/AMD ───────────────────────────────
+// Le panneau est `fixed top-0 right-0` et reste monté (simplement translaté
+// hors écran via `translate-x-full`) quand il est fermé. Sur WebKitGTK ≥ 2.44
+// + GPU AMD/Mesa, sa couche `backdrop-filter` off-screen est peinte comme un
+// rectangle NOIR dans le coin haut-droit du viewport (couche de compositing
+// mal placée). On retire donc le panneau du rendu (`display:none`) quand il
+// est fermé — mais après l'animation de fermeture (400ms) pour préserver le
+// slide-out.
+// `panelRendered` pilote `display` (montage/démontage visuel), `slideIn` pilote
+// le `translate-x`. On les découple : à l'ouverture on monte d'abord le panneau
+// hors écran (translate-x-full), puis — au frame suivant — on déclenche le
+// slide-in ; à la fermeture on slide out immédiatement puis on démonte après
+// l'animation. Sinon `display:none → flex` casse la transition d'entrée.
+let panelRendered = $state(false);
+let slideIn = $state(false);
+let closeTimer: ReturnType<typeof setTimeout> | undefined;
+let rafId = 0;
+$effect(() => {
+    if ($lyricsPanelOpened) {
+        clearTimeout(closeTimer);
+        panelRendered = true;
+        cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(() =>
+            rafId = requestAnimationFrame(() => { slideIn = true; })
+        );
+    } else {
+        slideIn = false;
+        closeTimer = setTimeout(() => { panelRendered = false; }, 450);
+    }
+    return () => { clearTimeout(closeTimer); cancelAnimationFrame(rafId); };
+});
+
 // ─── Cover blurrée pour le background ───
 // On prend la cover en cascade :
 // 1. Tag embarqué du fichier (data URI, toujours dispo si le fichier a une pochette)
@@ -180,8 +212,9 @@ function handleSeekToLine(timeMs: number) {
            overflow-hidden flex flex-col
            shadow-[-12px_0_60px_rgba(0,0,0,0.5)]
            transform transition-transform duration-400 ease-[cubic-bezier(0.16,1,0.3,1)]"
-    class:translate-x-0={$lyricsPanelOpened}
-    class:translate-x-full={!$lyricsPanelOpened}
+    class:translate-x-0={slideIn}
+    class:translate-x-full={!slideIn}
+    class:hidden={!panelRendered}
     aria-hidden={!$lyricsPanelOpened}
 >
     <!-- Background : cover floutée OU gradient de fallback -->
