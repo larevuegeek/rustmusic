@@ -9,6 +9,15 @@ html {
   font-family: 'Inter Variable', system-ui, sans-serif;
 }
 
+/* Fenêtre applicative : jamais de scroll au niveau du document (le scroll se
+   fait dans des conteneurs internes). Évite les scrollbars natives parasites,
+   notamment en mode mini-player où la fenêtre est très petite. */
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
 /* Hide scrollbar but keep scroll */
 .scrollbar-none {
   -ms-overflow-style: none;

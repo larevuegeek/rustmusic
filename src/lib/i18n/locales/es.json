@@ -52,6 +52,26 @@
     "wasapi_off_short": "Salida vía el mezclador de Windows",
     "volume_dop_locked": "Volumen gestionado por el DAC en DSD nativo (DoP)"
   },
+  "sleep": {
+    "title": "Temporizador de apagado",
+    "subtitle": "Detener la reproducción automáticamente",
+    "minutes": "{n} minutos",
+    "end_of_track": "Fin de la pista",
+    "custom": "Personalizado",
+    "set": "OK",
+    "cancel": "Cancelar temporizador",
+    "remaining": "Se detiene en {time}",
+    "until_end": "Se detiene al final de la pista"
+  },
+  "mini": {
+    "enter": "Modo mini-reproductor",
+    "restore": "Restaurar ventana",
+    "up_next": "Cola",
+    "queue_empty": "Nada a continuación",
+    "lyrics": "Letra",
+    "lyrics_loading": "Cargando la letra…",
+    "lyrics_empty": "Sin letra para esta pista"
+  },
   "library": {
     "tracks": "Canciones",
     "albums": "Álbumes",
@@ -248,6 +268,8 @@
     "scan_on_startup_desc": "Re-escanear bibliotecas automáticamente al abrir",
     "single_click_play": "Un clic = reproducir",
     "single_click_play_desc": "Un solo clic en una pista inicia la reproducción en lugar de seleccionarla",
+    "show_sleep_timer": "Temporizador de apagado",
+    "show_sleep_timer_desc": "Mostrar el botón del temporizador de apagado en la barra superior",
     "system_media_controls": "Controles de medios del sistema",
     "system_media_controls_desc": "Muestra la pista en reproducción en el SO (mini-reproductor de Windows, pantalla de bloqueo, teclas multimedia). Desactiva si tienes problemas en tu plataforma.",
     "appearance": "Apariencia",

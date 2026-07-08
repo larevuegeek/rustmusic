@@ -52,6 +52,26 @@
     "wasapi_off_short": "Uscita tramite il mixer di Windows",
     "volume_dop_locked": "Volume gestito dal DAC in DSD nativo (DoP)"
   },
+  "sleep": {
+    "title": "Timer di spegnimento",
+    "subtitle": "Ferma la riproduzione automaticamente",
+    "minutes": "{n} minuti",
+    "end_of_track": "Fine del brano",
+    "custom": "Personalizzato",
+    "set": "OK",
+    "cancel": "Annulla timer",
+    "remaining": "Stop tra {time}",
+    "until_end": "Si ferma a fine brano"
+  },
+  "mini": {
+    "enter": "Modalità mini-player",
+    "restore": "Ripristina finestra",
+    "up_next": "Coda",
+    "queue_empty": "Niente in arrivo",
+    "lyrics": "Testo",
+    "lyrics_loading": "Caricamento del testo…",
+    "lyrics_empty": "Nessun testo per questo brano"
+  },
   "library": {
     "tracks": "Brani",
     "albums": "Album",
@@ -248,6 +268,8 @@
     "scan_on_startup_desc": "Riscansiona automaticamente le librerie all'apertura",
     "single_click_play": "Singolo clic = riproduzione",
     "single_click_play_desc": "Un singolo clic su un brano avvia la riproduzione invece di selezionarlo",
+    "show_sleep_timer": "Timer di spegnimento",
+    "show_sleep_timer_desc": "Mostra il pulsante del timer di spegnimento nella barra superiore",
     "system_media_controls": "Controlli media di sistema",
     "system_media_controls_desc": "Mostra il brano in riproduzione nel sistema operativo (mini-player Windows, schermata di blocco, tasti media tastiera). Disattiva se hai problemi sulla tua piattaforma.",
     "appearance": "Aspetto",

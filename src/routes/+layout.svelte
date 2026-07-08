@@ -34,7 +34,13 @@ import { mediaControlsService } from "$lib/services/mediaControls/mediaControls.
 import { onDestroy } from "svelte";
 import { page } from "$app/state";
 import SelectionBar from "$lib/components/ui/selection/SelectionBar.svelte";
+import MiniPlayer from "$lib/components/player/MiniPlayer.svelte";
+import { miniPlayerActive } from "$lib/stores/ui/miniPlayer.store";
+import SleepTimerButton from "$lib/components/player/SleepTimerButton.svelte";
 import { fade } from "svelte/transition";
+
+// Affichage du bouton sleep timer dans le header (désactivable dans les réglages).
+let showSleepTimer = $derived($settingsStore.show_sleep_timer !== 'false');
 import type { Snippet } from "svelte";
 
 let { children }: { children: Snippet } = $props();
@@ -167,6 +173,9 @@ function handleKeydown(e: KeyboardEvent) {
 
 {#if !$profilSelector.initialized}
   <LoaderApp />
+{:else if $miniPlayerActive}
+  <!-- Mode mini-player : la fenêtre est réduite et always-on-top -->
+  <MiniPlayer />
 {:else}
 <main class="w-screen h-screen flex flex-col bg-gray-50/50 dark:bg-zinc-950 text-gray-900 dark:text-gray-100 overflow-hidden">
   <Titlebar />
@@ -257,6 +266,9 @@ function handleKeydown(e: KeyboardEvent) {
               </div>
 
               <div class="shrink-0 flex items-center gap-1 md:gap-2">
+                {#if showSleepTimer}
+                  <SleepTimerButton />
+                {/if}
                 <SwitchTheme />
                 <ProfilSelectorInput />
               </div>

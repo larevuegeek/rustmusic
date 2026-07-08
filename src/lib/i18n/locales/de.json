@@ -52,6 +52,26 @@
     "wasapi_off_short": "Ausgabe über den Windows-Mixer",
     "volume_dop_locked": "Lautstärke wird im nativen DSD (DoP) vom DAC geregelt"
   },
+  "sleep": {
+    "title": "Sleep-Timer",
+    "subtitle": "Wiedergabe automatisch stoppen",
+    "minutes": "{n} Minuten",
+    "end_of_track": "Ende des Titels",
+    "custom": "Benutzerdefiniert",
+    "set": "OK",
+    "cancel": "Timer abbrechen",
+    "remaining": "Schlaf in {time}",
+    "until_end": "Stoppt am Titelende"
+  },
+  "mini": {
+    "enter": "Mini-Player-Modus",
+    "restore": "Fenster wiederherstellen",
+    "up_next": "Warteschlange",
+    "queue_empty": "Nichts als Nächstes",
+    "lyrics": "Liedtext",
+    "lyrics_loading": "Liedtext wird geladen…",
+    "lyrics_empty": "Kein Liedtext für diesen Titel"
+  },
   "library": {
     "tracks": "Titel",
     "albums": "Alben",
@@ -248,6 +268,8 @@
     "scan_on_startup_desc": "Bibliotheken beim Start automatisch erneut scannen",
     "single_click_play": "Einfacher Klick = Abspielen",
     "single_click_play_desc": "Ein einfacher Klick auf einen Titel startet die Wiedergabe statt ihn auszuwählen",
+    "show_sleep_timer": "Sleep-Timer",
+    "show_sleep_timer_desc": "Sleep-Timer-Schaltfläche in der oberen Leiste anzeigen",
     "system_media_controls": "Systemmedienbedienelemente",
     "system_media_controls_desc": "Den laufenden Titel im OS anzeigen (Windows Mini-Player, Sperrbildschirm, Medientasten der Tastatur). Bei Problemen auf deiner Plattform deaktivieren.",
     "appearance": "Aussehen",

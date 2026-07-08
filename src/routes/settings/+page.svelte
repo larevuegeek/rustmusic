@@ -206,6 +206,7 @@
   let minimizeToTray = $derived($settingsStore.minimize_to_tray === 'true');
   let scanOnStartup = $derived($settingsStore.scan_on_startup === 'true');
   let singleClickPlay = $derived($settingsStore.single_click_play === 'true');
+  let showSleepTimer = $derived($settingsStore.show_sleep_timer !== 'false');
   let notifications = $derived($settingsStore.show_notifications === 'true');
   let systemMediaControls = $derived($settingsStore.system_media_controls === 'true');
   let wasapiExclusive = $derived($settingsStore.wasapi_exclusive === 'true');
@@ -519,6 +520,27 @@
           >
             <div class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200
                         {singleClickPlay ? 'translate-x-4' : ''}"></div>
+          </button>
+        </div>
+
+        <!-- Bouton minuteur de veille dans le header -->
+        <div class="flex items-center justify-between px-4 py-3 rounded-xl
+                    hover:bg-neutral-50 dark:hover:bg-white/2 transition-colors">
+          <div class="flex items-center gap-3">
+            <Icon icon="tabler:alarm-snooze" width="18" class="text-neutral-400" />
+            <div>
+              <p class="text-sm font-medium text-neutral-800 dark:text-neutral-200">{$t('settings.show_sleep_timer')}</p>
+              <p class="text-[11px] text-neutral-400 dark:text-neutral-500">{$t('settings.show_sleep_timer_desc')}</p>
+            </div>
+          </div>
+          <button
+            class="relative w-10 h-6 rounded-full cursor-pointer transition-colors duration-200
+                   {showSleepTimer ? 'bg-green-500' : 'bg-neutral-300 dark:bg-neutral-700'}"
+            aria-label="Minuteur de veille"
+            onclick={() => settingsStore.toggle('show_sleep_timer')}
+          >
+            <div class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200
+                        {showSleepTimer ? 'translate-x-4' : ''}"></div>
           </button>
         </div>
 

@@ -3,7 +3,7 @@
   import { t } from "$lib/i18n";
   import { check } from "@tauri-apps/plugin-updater";
 
-  const APP_VERSION = "0.1.8";
+  const APP_VERSION = "0.1.9";
   const BUILD_DATE = "Juillet 2026";
 
   let showLicense = $state(false);

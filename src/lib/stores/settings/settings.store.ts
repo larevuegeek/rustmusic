@@ -12,6 +12,7 @@ export type AppSettings = {
   audio_quality: string;
   hardware_acceleration: string;
   single_click_play: string;
+  show_sleep_timer: string;          // 'true' | 'false' — bouton minuteur de veille dans le header
   system_media_controls: string;     // 'true' | 'false' — SMTC / MPRIS / Now Playing
   wasapi_exclusive: string;          // 'true' | 'false' — Windows uniquement, bit-perfect
   dsd_dop: string;                   // 'true' | 'false' — DSD natif (DoP) via WASAPI exclusive
@@ -29,6 +30,7 @@ const defaults: AppSettings = {
   audio_quality: 'high',
   hardware_acceleration: 'true',
   single_click_play: 'false',
+  show_sleep_timer: 'true',
   system_media_controls: 'true',
   wasapi_exclusive: 'false',
   dsd_dop: 'false',

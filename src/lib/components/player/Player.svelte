@@ -4,6 +4,7 @@ import Icon from "@iconify/svelte";
 import { t } from "$lib/i18n";
 import PlayerProgressBar from "./PlayerProgressBar.svelte";
 import PlayerSoundBar from "./PlayerSoundBar.svelte";
+import { toggleMiniPlayer } from "$lib/stores/ui/miniPlayer.store";
 import { toggleQueuePanel } from "$lib/stores/queue/queueUi.store";
 import { toggleLyricsPanel, lyricsPanelOpened } from "$lib/stores/lyrics/lyricsPanel.store";
 import LyricsPanel from "$lib/components/lyrics/LyricsPanel.svelte";
@@ -111,8 +112,7 @@ function handleForward() {
 
   <button
     class="{btnSmall} text-neutral-500 dark:text-neutral-500
-           hover:text-neutral-700 dark:hover:text-neutral-300
-           hover:bg-neutral-100/80 dark:hover:bg-white/6"
+           hover:text-neutral-700 dark:hover:text-neutral-300"
     onclick={toggleQueuePanel}
     aria-label="File d'attente"
   >
@@ -123,12 +123,21 @@ function handleForward() {
     class="{btnSmall}
            {$lyricsPanelOpened
              ? 'text-emerald-500'
-             : 'text-neutral-500 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'}
-           hover:bg-neutral-100/80 dark:hover:bg-white/6"
+             : 'text-neutral-500 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300'}"
     onclick={toggleLyricsPanel}
     aria-label="Paroles"
   >
     <Icon icon="lucide:mic-vocal" width="16" height="16" />
+  </button>
+
+  <button
+    class="{btnSmall} text-neutral-500 dark:text-neutral-500
+           hover:text-neutral-700 dark:hover:text-neutral-300"
+    onclick={() => toggleMiniPlayer()}
+    aria-label={$t('mini.enter')}
+    title={$t('mini.enter')}
+  >
+    <Icon icon="lucide:picture-in-picture-2" width="16" height="16" />
   </button>
 
   <div class="flex items-center gap-1">
@@ -209,8 +218,7 @@ function handleForward() {
 
     <button
       class="{btnMed} text-neutral-700 dark:text-neutral-200
-             hover:text-neutral-900 dark:hover:text-white
-             hover:bg-neutral-100/80 dark:hover:bg-white/[0.06]"
+             hover:text-neutral-900 dark:hover:text-white"
       onclick={async() => await playerService.prevTrack()}
       aria-label="Précédent"
     >
@@ -240,8 +248,7 @@ function handleForward() {
 
     <button
       class="{btnMed} text-neutral-700 dark:text-neutral-200
-             hover:text-neutral-900 dark:hover:text-white
-             hover:bg-neutral-100/80 dark:hover:bg-white/6"
+             hover:text-neutral-900 dark:hover:text-white"
       onclick={async() => await playerService.nextTrack()}
       aria-label="Suivant"
     >
@@ -501,7 +508,7 @@ function handleForward() {
         </button>
 
         <button
-          class="{btnMed} text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100/80 dark:hover:bg-white/6"
+          class="{btnMed} text-neutral-700 dark:text-neutral-200 hover:text-neutral-900 dark:hover:text-white"
           onclick={async() => await playerService.prevTrack()}
           aria-label="Précédent"
         >
@@ -524,7 +531,7 @@ function handleForward() {
         </button>
 
         <button
-          class="{btnMed} text-neutral-700 dark:text-neutral-200 hover:bg-neutral-100/80 dark:hover:bg-white/6"
+          class="{btnMed} text-neutral-700 dark:text-neutral-200 hover:text-neutral-900 dark:hover:text-white"
           onclick={async() => await playerService.nextTrack()}
           aria-label="Suivant"
         >

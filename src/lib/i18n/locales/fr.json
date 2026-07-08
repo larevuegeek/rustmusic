@@ -52,6 +52,26 @@
     "wasapi_off_short": "Sortie via le mixer Windows",
     "volume_dop_locked": "Volume géré par le DAC en DSD natif (DoP)"
   },
+  "sleep": {
+    "title": "Minuteur de veille",
+    "subtitle": "Arrêter la lecture automatiquement",
+    "minutes": "{n} minutes",
+    "end_of_track": "Fin du morceau",
+    "custom": "Personnalisé",
+    "set": "OK",
+    "cancel": "Annuler le minuteur",
+    "remaining": "Veille dans {time}",
+    "until_end": "Arrêt en fin de morceau"
+  },
+  "mini": {
+    "enter": "Mode mini-player",
+    "restore": "Agrandir la fenêtre",
+    "up_next": "File d'attente",
+    "queue_empty": "Aucun morceau à suivre",
+    "lyrics": "Paroles",
+    "lyrics_loading": "Chargement des paroles…",
+    "lyrics_empty": "Aucune parole pour ce morceau"
+  },
   "library": {
     "tracks": "Morceaux",
     "albums": "Albums",
@@ -248,6 +268,8 @@
     "scan_on_startup_desc": "Rescanner automatiquement les bibliothèques à l'ouverture",
     "single_click_play": "Simple clic = lecture",
     "single_click_play_desc": "Un simple clic sur un morceau lance la lecture au lieu de le sélectionner",
+    "show_sleep_timer": "Minuteur de veille",
+    "show_sleep_timer_desc": "Afficher le bouton du minuteur de veille dans la barre du haut",
     "system_media_controls": "Contrôles média système",
     "system_media_controls_desc": "Afficher le morceau en cours dans l'OS (mini-player Windows, écran de verrouillage, touches média clavier). Désactive si problème sur ta plateforme.",
     "appearance": "Apparence",

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.9] - 2026-07-08
+
+### UI — Minuterie de veille (sleep timer)
+- Bouton minuterie dans l'en-tête (à côté du sélecteur de thème), avec menu déroulant premium
+- Durées rapides (15 / 30 / 45 / 60 min) + durée personnalisée, ou mode « fin du morceau en cours »
+- Compte à rebours affiché en direct ; met la lecture en pause à l'échéance
+- Option pour masquer le bouton dans les Réglages (section Général)
+
+### UI — Mini-lecteur (compact, toujours au premier plan)
+- Bascule vers une fenêtre compacte always-on-top depuis le player (icône picture-in-picture)
+- Infos de lecture (pochette, titre, artiste, badge qualité DSD/Hi-Res, fréquence), transport et barre de progression cliquable
+- Deux onglets déroulants : File d'attente (cliquable pour sauter à une piste) et Paroles synchronisées (ligne active surlignée, défilement auto)
+- Animation de déroulement fluide, fenêtre dimensionnée au pixel près sur son contenu
+- Restauration de la fenêtre principale en un clic
+
+### Corrections & maintenance
+- Compatibilité avec la montée de version des dépendances (CPAL 0.18, rubato 2.0, reqwest 0.13, image 0.25, Svelte/Vite/TypeScript)
+- Correction de compilation Linux (chemin de module `system_detect`)
+
 ## [0.1.8] - 2026-07-01
 
 ### Audio — WASAPI exclusive (Windows, bit-perfect)

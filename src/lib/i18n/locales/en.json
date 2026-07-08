@@ -52,6 +52,26 @@
     "wasapi_off_short": "Output via the Windows mixer",
     "volume_dop_locked": "Volume handled by the DAC in native DSD (DoP)"
   },
+  "sleep": {
+    "title": "Sleep timer",
+    "subtitle": "Automatically stop playback",
+    "minutes": "{n} minutes",
+    "end_of_track": "End of track",
+    "custom": "Custom",
+    "set": "Set",
+    "cancel": "Cancel timer",
+    "remaining": "Sleeps in {time}",
+    "until_end": "Stops at end of track"
+  },
+  "mini": {
+    "enter": "Mini-player mode",
+    "restore": "Restore window",
+    "up_next": "Queue",
+    "queue_empty": "Nothing up next",
+    "lyrics": "Lyrics",
+    "lyrics_loading": "Loading lyrics…",
+    "lyrics_empty": "No lyrics for this track"
+  },
   "library": {
     "tracks": "Tracks",
     "albums": "Albums",
@@ -248,6 +268,8 @@
     "scan_on_startup_desc": "Automatically rescan libraries on launch",
     "single_click_play": "Single click = play",
     "single_click_play_desc": "A single click on a track starts playback instead of selecting it",
+    "show_sleep_timer": "Sleep timer",
+    "show_sleep_timer_desc": "Show the sleep-timer button in the top bar",
     "system_media_controls": "System media controls",
     "system_media_controls_desc": "Show the playing track in the OS (Windows mini-player, lock screen, keyboard media keys). Disable if you hit issues on your platform.",
     "appearance": "Appearance",

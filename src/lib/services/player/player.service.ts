@@ -8,6 +8,7 @@ import type { AudioFile } from "$lib/types/db/audioFile/AudioFile";
 import { recent } from "$lib/stores/recent/recent.store";
 import { queueState } from "$lib/stores/queue/queueState.store";
 import { settingsStore } from "$lib/stores/settings/settings.store";
+import { sleepTimer } from "$lib/stores/player/sleepTimer.store";
 import { sendNotification, isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 
 let raf: number = 0;
@@ -35,6 +36,12 @@ class PlayerService {
         await this.initPlaybackListener();
         await this.initPreparingListener();
         this.initQueueSync();
+
+        // Sleep timer : à échéance (mode durée), on met en pause la lecture.
+        sleepTimer.setOnFire(() => {
+            const status = get(player).status;
+            if (status === "playing") this.pauseFile();
+        });
     }
 
     destroy() {
@@ -96,6 +103,12 @@ class PlayerService {
                 return;
             }
             playStartedAt = 0;
+
+            // Sleep timer « fin de piste » : on stoppe au lieu d'enchaîner.
+            if (sleepTimer.consumeEndOfTrack()) {
+                this.stopPlay();
+                return;
+            }
 
             const state = get(queueState);
             if (state.repeatMode === "one") {
