@@ -2,77 +2,19 @@
 // FONCTIONS UTILITAIRES
 // ============================================================================
 
-use symphonia::core::audio::{AudioBufferRef, Signal};
+use symphonia::core::audio::GenericAudioBufferRef;
 
-/// Convertit un AudioBufferRef Symphonia en Vec<f32> interleaved
-/// IMPORTANT : Normalise correctement les samples en [-1.0, 1.0]
+/// Convertit un GenericAudioBufferRef Symphonia en Vec<f32> interleaved.
+/// Depuis symphonia 0.6, la conversion de format de sample (U8/S16/S24/S32/F64
+/// → f32 normalisé [-1.0, 1.0]) est intégrée : `copy_to_vec_interleaved`
+/// gère tous les formats source, y compris ceux que l'ancien match manuel
+/// ne couvrait pas (S24, U16, U24, U32...).
 pub fn convert_audio_buffer_to_interleaved(
-    audio_buf: &AudioBufferRef,
+    audio_buf: &GenericAudioBufferRef,
     channels: usize,
 ) -> Vec<f32> {
-    let frames = audio_buf.frames();
-    let mut samples: Vec<f32> = Vec::with_capacity(frames * channels);
-
-    match audio_buf {
-        AudioBufferRef::U8(buf) => {
-            // U8 est entre 0..255, on normalise en [-1.0, 1.0]
-            for frame_idx in 0..frames {
-                for ch in 0..channels {
-                    let sample: u8 = buf.chan(ch)[frame_idx];
-                    // Convertir 0..255 -> -1.0..1.0
-                    let normalized: f32 = (sample as f32 - 128.0) / 128.0;
-                    samples.push(normalized);
-                }
-            }
-        }
-        AudioBufferRef::S16(buf) => {
-            // i16 va de -32768 à +32767 (asymétrique). On divise par 32768
-            // (et NON 32767) pour mapper proprement :
-            //   -32768 → -1.0 exact (pas de clipping)
-            //   +32767 → +0.99997 (perte 0.003 dB sur le pic positif, inaudible)
-            // Avec /32767, le min -32768 produit -1.00003 → clippé par le clamp
-            // CPAL final → distorsion harmonique audible (souffle) sur les pics
-            // négatifs, fréquents en mastering "loudness war".
-            for frame_idx in 0..frames {
-                for ch in 0..channels {
-                    let sample: i16 = buf.chan(ch)[frame_idx];
-                    let normalized: f32 = sample as f32 / 32768.0;
-                    samples.push(normalized);
-                }
-            }
-        }
-        AudioBufferRef::S32(buf) => {
-            // i32 va de -2_147_483_648 à +2_147_483_647. On divise par 2^31
-            // (2_147_483_648) pour mapper le min en -1.0 exact (idem S16).
-            // Pour les FLAC 24-bit symphonia remplit les 24 bits hauts (les 8 bits
-            // bas sont à zéro), donc le max effectif est 0x7FFFFF00 → ~0.99999.
-            for frame_idx in 0..frames {
-                for ch in 0..channels {
-                    let sample: i32 = buf.chan(ch)[frame_idx];
-                    let normalized: f32 = sample as f32 / 2147483648.0;
-                    samples.push(normalized);
-                }
-            }
-        }
-        AudioBufferRef::F32(buf) => {
-            // F32 est déjà normalisé en [-1.0, 1.0]
-            for frame_idx in 0..frames {
-                for ch in 0..channels {
-                    samples.push(buf.chan(ch)[frame_idx]);
-                }
-            }
-        }
-        AudioBufferRef::F64(buf) => {
-            // F64 est déjà normalisé
-            for frame_idx in 0..frames {
-                for ch in 0..channels {
-                    samples.push(buf.chan(ch)[frame_idx] as f32);
-                }
-            }
-        }
-        _ => {}
-    }
-
+    let mut samples: Vec<f32> = Vec::with_capacity(audio_buf.frames() * channels);
+    audio_buf.copy_to_vec_interleaved(&mut samples);
     samples
 }
 

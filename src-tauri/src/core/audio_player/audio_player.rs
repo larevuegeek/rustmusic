@@ -3,14 +3,15 @@ use std::thread::JoinHandle;
 use std::{fs::File, path::PathBuf};
 
 use ringbuf::traits::Observer;
-use symphonia::core::audio::AudioBufferRef;
-use symphonia::core::codecs::{Decoder, DecoderOptions};
+use symphonia::core::audio::GenericAudioBufferRef;
+use symphonia::core::codecs::audio::{AudioCodecParameters, AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error;
+use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::ProbeResult;
+use symphonia::core::units::Timestamp;
 use symphonia::{
-    core::{formats::FormatReader, io::MediaSourceStream, probe::Hint},
+    core::{formats::FormatReader, io::MediaSourceStream},
     default::get_probe,
 };
 
@@ -278,27 +279,48 @@ impl AudioPlayer {
         let format_opts: FormatOptions = Default::default();
         let metadata_opts: MetadataOptions = Default::default();
 
-        let probed: ProbeResult = get_probe().format(&hint, mss, &format_opts, &metadata_opts)?;
-        let format: Box<dyn FormatReader> = probed.format;
+        let format: Box<dyn FormatReader> =
+            get_probe().probe(&hint, mss, format_opts, metadata_opts)?;
 
         let track: &symphonia::core::formats::Track = format
             .tracks()
             .iter()
-            .find(|t| t.codec_params.sample_rate.is_some())
+            .find(|t| {
+                t.codec_params
+                    .as_ref()
+                    .and_then(|c| c.audio())
+                    .map_or(false, |a| a.sample_rate.is_some())
+            })
             .ok_or("Aucune piste audio trouvée")?;
 
         let track_id: u32 = track.id;
-        let source_sample_rate: u32 = track.codec_params.sample_rate
+        let codec_params: AudioCodecParameters = track
+            .codec_params
+            .as_ref()
+            .and_then(|c| c.audio())
+            .cloned()
+            .ok_or("Paramètres codec audio manquants")?;
+        let source_sample_rate: u32 = codec_params.sample_rate
             .ok_or("Pas de sample rate détecté dans le fichier")?;
-        let channels: usize = track.codec_params.channels
+        let channels: usize = codec_params.channels.as_ref()
             .ok_or("Pas d'info channels dans le fichier")?.count();
-        let codec_params: symphonia::core::codecs::CodecParameters = track.codec_params.clone();
 
-        if let (Some(n_frames), Some(tb)) = (codec_params.n_frames, codec_params.time_base) {
-            let t = tb.calc_time(n_frames);
-            let total_secs: f64 = t.seconds as f64 + t.frac;
-            total_duration.store(total_secs.to_bits(), Ordering::Relaxed);
-            log::debug!("🕒 Durée totale détectée : {:.2} secondes", total_secs);
+        // Durée : `duration` (en unités de timebase) prioritaire, sinon
+        // fallback num_frames / sample_rate (timing déplacé sur Track en 0.6).
+        let mut total_secs: Option<f64> = None;
+        if let (Some(dur), Some(tb)) = (track.duration, track.time_base) {
+            total_secs = tb
+                .calc_time(Timestamp::from(dur.get() as i64))
+                .map(|t| t.as_secs_f64());
+        }
+        if total_secs.is_none() {
+            if let Some(n_frames) = track.num_frames {
+                total_secs = Some(n_frames as f64 / source_sample_rate as f64);
+            }
+        }
+        if let Some(secs) = total_secs {
+            total_duration.store(secs.to_bits(), Ordering::Relaxed);
+            log::debug!("🕒 Durée totale détectée : {:.2} secondes", secs);
         } else {
             log::debug!("⚠️ Impossible de déterminer la durée totale");
         }
@@ -1580,7 +1602,7 @@ impl AudioPlayer {
 // ===============
 pub fn decode_thread<P>(
     mut format: Box<dyn FormatReader>,
-    codec_params: symphonia::core::codecs::CodecParameters,
+    codec_params: AudioCodecParameters,
     track_id: u32,
     source_sample_rate: u32,
     output_sample_rate: u32,
@@ -1602,8 +1624,8 @@ where
 {
     log::debug!("🧵 Decoder thread démarré");
 
-    let mut decoder: Box<dyn Decoder> = symphonia::default::get_codecs()
-        .make(&codec_params, &DecoderOptions::default())
+    let mut decoder: Box<dyn AudioDecoder> = symphonia::default::get_codecs()
+        .make_audio_decoder(&codec_params, &AudioDecoderOptions::default())
         .map_err(|e| format!("Erreur création decoder: {:?}", e))?;
 
     // resampler si besoin (None = aucun resampling, output rate == source rate)
@@ -1645,10 +1667,10 @@ where
             }
 
             // CAS 2 : LiveDecode — seek dans symphonia + flush ring buffer
-            let seek_ts = (seek_seconds * sample_rate_for_seek as f64) as u64;
+            let seek_ts = (seek_seconds * sample_rate_for_seek as f64) as i64;
             match format.seek(
                 symphonia::core::formats::SeekMode::Coarse,
-                symphonia::core::formats::SeekTo::TimeStamp { ts: seek_ts, track_id },
+                symphonia::core::formats::SeekTo::Timestamp { ts: Timestamp::from(seek_ts), track_id },
             ) {
                 Ok(seeked) => {
                     current_position_frames.store(new_frames, Ordering::Relaxed);
@@ -1682,7 +1704,7 @@ where
                     is_full_buffer_ready.store(false, Ordering::Relaxed);
                     current_source.store(0, Ordering::Relaxed);
 
-                    log::debug!("Seek LiveDecode à {:.1}s (actual_ts={})", seek_seconds, seeked.actual_ts);
+                    log::debug!("Seek LiveDecode à {:.1}s (actual_ts={:?})", seek_seconds, seeked.actual_ts);
                 }
                 Err(e) => {
                     log::error!("Seek échoué: {:?}", e);
@@ -1691,10 +1713,11 @@ where
             continue;
         }
 
-        // On récupère les paquets
-        let packet: symphonia::core::formats::Packet = match format.next_packet() {
-            Ok(p) => p,
-            Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+        // On récupère les paquets (0.6 : Ok(None) = fin de média propre,
+        // un UnexpectedEof est désormais toujours une vraie erreur)
+        let packet: symphonia::core::packet::Packet = match format.next_packet() {
+            Ok(Some(p)) => p,
+            Ok(None) => {
                 log::debug!("Fin du fichier - {} packets décodés", packet_count);
                 break;
             }
@@ -1706,11 +1729,11 @@ where
 
         packet_count += 1;
 
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
 
-        let audio_buf: AudioBufferRef<'_> = match decoder.decode(&packet) {
+        let audio_buf: GenericAudioBufferRef<'_> = match decoder.decode(&packet) {
             Ok(buf) => buf,
             Err(Error::DecodeError(msg)) => {
                 if msg.contains("invalid main_data offset") || msg.contains("frame length") {

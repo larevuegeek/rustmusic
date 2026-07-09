@@ -8,13 +8,14 @@ use crate::entity::audio::audio_tags::{AttachedImage, AudioTags, ImageType};
 use crate::helper::string::string::normalize_year;
 use base64::engine::general_purpose;
 use base64::Engine;
-use symphonia::core::codecs::{self, CodecType};
+use symphonia::core::codecs::audio::{well_known as codec_ids, AudioCodecId};
+use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::{
-    MetadataOptions, MetadataRevision, StandardTagKey, StandardVisualKey, Visual,
+    MetadataOptions, MetadataRevision, StandardTag, StandardVisualKey, Visual,
 };
-use symphonia::core::probe::{Hint, ProbeResult};
+use symphonia::core::units::Timestamp;
 use symphonia::default::get_probe;
 
 pub struct AudioAnalyser;
@@ -66,43 +67,52 @@ impl AudioAnalyser {
         let format_opts: FormatOptions = Default::default();
         let metadata_opts: MetadataOptions = Default::default();
 
-        //Sonde qui permet à symphonia de récupérer le format du fichier audio
-        let mut probed: ProbeResult =
-            get_probe().format(&hint, mss, &format_opts, &metadata_opts)?;
-        let mut format: Box<dyn FormatReader> = probed.format;
+        //Sonde qui permet à symphonia de récupérer le format du fichier audio.
+        //0.6 : probe() retourne directement le FormatReader ; les métadonnées
+        //lues pendant le probe sont disponibles sur le reader lui-même.
+        let mut format: Box<dyn FormatReader> =
+            get_probe().probe(&hint, mss, format_opts, metadata_opts)?;
         // Récupérer les infos de la première piste audio trouvé dans le fichier (qui possède un SampleRate)
-        let (track_id, codec_params) = {
+        let (track_id, codec_params, track_duration, track_time_base, track_num_frames) = {
             let track = format
                 .tracks()
                 .iter()
-                .find(|t| t.codec_params.sample_rate.is_some())
+                .find(|t| {
+                    t.codec_params
+                        .as_ref()
+                        .and_then(|c| c.audio())
+                        .map_or(false, |a| a.sample_rate.is_some())
+                })
                 .ok_or("Aucune piste audio trouvée")?;
 
-            (track.id, track.codec_params.clone())
+            let audio_params = track
+                .codec_params
+                .as_ref()
+                .and_then(|c| c.audio())
+                .cloned()
+                .ok_or("Paramètres codec audio manquants")?;
+
+            (track.id, audio_params, track.duration, track.time_base, track.num_frames)
         };
 
-        let bits_per_sample: u32 = codec_params.bits_per_sample.unwrap_or(0) as u32;
+        let bits_per_sample: u32 = codec_params.bits_per_sample.unwrap_or(0);
         let source_sample_rate: u32 = codec_params.sample_rate.ok_or("Pas de sample rate")?;
-        let channels: usize = codec_params.channels.ok_or("Pas d'info channels")?.count();
-        let codec_params: symphonia::core::codecs::CodecParameters = codec_params.clone();
+        let channels: usize = codec_params.channels.as_ref().ok_or("Pas d'info channels")?.count();
 
         let mut duration_sec: Option<f64> = None;
 
         // Calculer la durée si les infos sont disponibles
-        // 1️⃣ Méthode 1 : via n_frames (si dispo)
-        if let Some(n_frames) = codec_params.n_frames {
-            if let Some(tb) = codec_params.time_base {
-                let time: symphonia::core::units::Time = tb.calc_time(n_frames);
-                duration_sec = Some(time.seconds as f64 + time.frac);
-            }
+        // 1️⃣ Méthode 1 : via duration + time_base (timing sur Track en 0.6)
+        if let (Some(dur), Some(tb)) = (track_duration, track_time_base) {
+            duration_sec = tb
+                .calc_time(Timestamp::from(dur.get() as i64))
+                .map(|t| t.as_secs_f64());
         }
 
-        // 2️⃣ Méthode 2 : via total_samples (souvent pour FLAC)
+        // 2️⃣ Méthode 2 : via num_frames (souvent pour FLAC)
         if duration_sec.is_none() {
-            if let Some(sr) = codec_params.sample_rate {
-                if let Some(total_samples) = codec_params.n_frames {
-                    duration_sec = Some(total_samples as f64 / sr as f64);
-                }
+            if let Some(total_samples) = track_num_frames {
+                duration_sec = Some(total_samples as f64 / source_sample_rate as f64);
             }
         }
 
@@ -129,36 +139,20 @@ impl AudioAnalyser {
         //////////////////////// Gestion des TAGS ////////////////////////////
         let mut tags: AudioTags = AudioTags::new();
 
-        // 2. Métadonnées du probe (souvent là pour MP3)
-        if let Some(metadata_rev) = probed.metadata.get().as_ref().and_then(|m| m.current()) {
-            tags = Self::tags_reader(tags, metadata_rev);
-        }
-
-        // 🔹 3. Métadonnées spécifiques au format (FLAC, OGG, etc.)
-        if let Some(meta) = format.metadata().current() {
-            tags = Self::tags_reader(tags, meta);
-        }
-
-        // 3. Récupérer la vignette (cover art)
-        //println!("\n=== Vignette ===\n");
-
+        // 0.6 : les métadonnées du probe et du format sont unifiées sur le
+        // reader — une seule source à lire (tags + visuels).
         let mut cover_found: bool = false;
 
-        // Chercher dans les métadonnées du probe
-        if let Some(metadata_rev) = probed.metadata.get().as_ref().and_then(|m| m.current()) {
-            for visual in metadata_rev.visuals() {
-                cover_found = true;
-
-                let attached_image: AttachedImage = Self::visual_tag_reader(&visual);
-
-                //On injecte dans la struct Tags
-                tags.attached_images.push(attached_image);
-            }
-        }
-        
-        // Chercher dans les métadonnées dans le fichier
         if let Some(metadata_rev) = format.metadata().current() {
-            for visual in metadata_rev.visuals() {
+            tags = Self::tags_reader(tags, metadata_rev);
+
+            // Récupérer la vignette (cover art) — media-level puis per-track
+            let visuals = metadata_rev
+                .media
+                .visuals
+                .iter()
+                .chain(metadata_rev.per_track.iter().flat_map(|pt| pt.metadata.visuals.iter()));
+            for visual in visuals {
                 cover_found = true;
 
                 let attached_image: AttachedImage = Self::visual_tag_reader(visual);
@@ -207,16 +201,16 @@ impl AudioAnalyser {
         return Ok(audiofile);
     }
 
-    fn map_codec_to_format(codec: CodecType) -> AudioFormat {
-        if codec == codecs::CODEC_TYPE_MP3 {
+    fn map_codec_to_format(codec: AudioCodecId) -> AudioFormat {
+        if codec == codec_ids::CODEC_ID_MP3 {
             AudioFormat::MP3
-        } else if codec == codecs::CODEC_TYPE_FLAC {
+        } else if codec == codec_ids::CODEC_ID_FLAC {
             AudioFormat::FLAC
-        } else if codec == codecs::CODEC_TYPE_VORBIS || codec == codecs::CODEC_TYPE_OPUS {
+        } else if codec == codec_ids::CODEC_ID_VORBIS || codec == codec_ids::CODEC_ID_OPUS {
             AudioFormat::OGG
-        } else if codec == codecs::CODEC_TYPE_PCM_S16LE
-            || codec == codecs::CODEC_TYPE_PCM_S24LE
-            || codec == codecs::CODEC_TYPE_PCM_F32LE
+        } else if codec == codec_ids::CODEC_ID_PCM_S16LE
+            || codec == codec_ids::CODEC_ID_PCM_S24LE
+            || codec == codec_ids::CODEC_ID_PCM_F32LE
         {
             AudioFormat::WAV
         } else {
@@ -225,74 +219,73 @@ impl AudioAnalyser {
     }
 
     fn tags_reader(mut tags: AudioTags, metadata_rev: &MetadataRevision) -> AudioTags {
-        for tag in metadata_rev.tags() {
-            if let Some(std_key) = &tag.std_key {
-                //println!("key : {:?} Value : {:}", std_key, tag.value);
+        // 0.6 : les tags sont dans un MetadataContainer (media-level +
+        // per-track) et un Tag = RawTag + Option<StandardTag> typé.
+        let all_tags = metadata_rev
+            .media
+            .tags
+            .iter()
+            .chain(metadata_rev.per_track.iter().flat_map(|pt| pt.metadata.tags.iter()));
 
-                match std_key {
-                    StandardTagKey::TrackTitle => tags.title = Some(tag.value.to_string()),
-                    StandardTagKey::Artist => {
+        for tag in all_tags {
+            if let Some(std_tag) = &tag.std {
+                match std_tag {
+                    StandardTag::TrackTitle(v) => tags.title = Some(v.to_string()),
+                    StandardTag::Artist(v) => {
                         // Vorbis/FLAC peut avoir plusieurs tags ARTIST séparés
                         // On les accumule avec ";" pour que split_artists() les sépare
-                        let val = tag.value.to_string();
+                        let val = v.to_string();
                         tags.artist = Some(match tags.artist.take() {
                             Some(existing) => format!("{}; {}", existing, val),
                             None => val,
                         });
                     }
-                    StandardTagKey::Album => tags.album = Some(tag.value.to_string()),
-                    StandardTagKey::Genre => tags.genre = Some(tag.value.to_string()),
-                    StandardTagKey::Date => tags.year = normalize_year(Some(tag.value.to_string())),
-                    StandardTagKey::TrackNumber => {
-                        if let Ok(num) = tag.value.to_string().parse::<u16>() {
-                            tags.track_number = Some(num);
+                    StandardTag::Album(v) => tags.album = Some(v.to_string()),
+                    StandardTag::Genre(v) => tags.genre = Some(v.to_string()),
+                    // 0.5 "Date" → 0.6 décliné en ReleaseDate/RecordingDate/…
+                    StandardTag::ReleaseDate(v) | StandardTag::RecordingDate(v) => {
+                        if tags.year.is_none() {
+                            tags.year = normalize_year(Some(v.to_string()));
                         }
                     }
-                    StandardTagKey::Composer => tags.composer = Some(tag.value.to_string()),
-                    StandardTagKey::Encoder => tags.encoded_by = Some(tag.value.to_string()),
-                    StandardTagKey::Copyright => tags.copyright = Some(tag.value.to_string()),
-                    StandardTagKey::AlbumArtist => {
-                        let val = tag.value.to_string();
+                    StandardTag::ReleaseYear(y) | StandardTag::RecordingYear(y) => {
+                        if tags.year.is_none() {
+                            tags.year = normalize_year(Some(y.to_string()));
+                        }
+                    }
+                    StandardTag::TrackNumber(num) => {
+                        tags.track_number = u16::try_from(*num).ok();
+                    }
+                    StandardTag::Composer(v) => tags.composer = Some(v.to_string()),
+                    StandardTag::Encoder(v) | StandardTag::EncodedBy(v) => {
+                        tags.encoded_by = Some(v.to_string())
+                    }
+                    StandardTag::Copyright(v) => tags.copyright = Some(v.to_string()),
+                    StandardTag::AlbumArtist(v) => {
+                        let val = v.to_string();
                         tags.album_artist = Some(match tags.album_artist.take() {
                             Some(existing) => format!("{}; {}", existing, val),
                             None => val,
                         });
                     }
-                    StandardTagKey::Bpm => tags.bpm = Some(tag.value.to_string()),
-                    StandardTagKey::DiscNumber => {
-                        if let Ok(num) = tag.value.to_string().parse::<u16>() {
-                            tags.disc_number = Some(num);
-                        }
+                    StandardTag::Bpm(v) => tags.bpm = Some(v.to_string()),
+                    StandardTag::DiscNumber(num) => {
+                        tags.disc_number = u16::try_from(*num).ok();
                     }
-                    StandardTagKey::Comment => tags.comment = Some(tag.value.to_string()),
-                    StandardTagKey::Rating => {
-                        // POPM (ID3v2) : 0-255 → 0-5 étoiles
-                        // Vorbis RATING : souvent 0-100 ou 0-5 directement
-                        let val_str = tag.value.to_string();
-                        if let Ok(num) = val_str.parse::<i32>() {
-                            let stars = if num == 0 {
-                                0
-                            } else if num <= 5 {
-                                num // déjà en 0-5
-                            } else if num <= 100 {
-                                (num + 19) / 20 // 0-100 → 0-5 (avec arrondi)
-                            } else {
-                                // Mapping POPM standard (0-255)
-                                match num {
-                                    1..=31 => 1,
-                                    32..=95 => 2,
-                                    96..=159 => 3,
-                                    160..=223 => 4,
-                                    _ => 5,
-                                }
-                            };
-                            tags.rating = Some(stars);
-                        }
+                    StandardTag::Comment(v) => tags.comment = Some(v.to_string()),
+                    StandardTag::Rating(ppm) => {
+                        // 0.6 normalise le rating en PPM (0..=1_000_000),
+                        // quel que soit le format source (POPM, Vorbis…).
+                        // → 0-5 étoiles avec arrondi au plus proche.
+                        let stars = ((*ppm as f64 / 1_000_000.0) * 5.0).round() as i32;
+                        tags.rating = Some(stars.clamp(0, 5));
                     }
-                    _ => {
-                        // Clé connue mais non encore mappée
+                    other => {
+                        // Clé connue mais non encore mappée : on garde la clé
+                        // brute du fichier + sa valeur telle qu'écrite.
+                        let _ = other;
                         tags.custom_tags
-                            .push((format!("{:?}", std_key), tag.value.to_string()));
+                            .push((tag.raw.key.clone(), tag.raw.value.to_string()));
                     }
                 }
             }
@@ -304,14 +297,22 @@ impl AudioAnalyser {
     fn visual_tag_reader(visual: &Visual) -> AttachedImage {
         let base64_cover: String = general_purpose::STANDARD.encode(&visual.data);
 
-        let image_src: String = format!("data:{};base64,{}", visual.media_type, base64_cover);
+        // 0.6 : media_type est devenu Option<String>
+        let mime_type: String = visual
+            .media_type
+            .clone()
+            .unwrap_or_else(|| "image/unknown".to_string());
 
-        let image_type: ImageType = match visual.usage.clone() {
+        let image_src: String = format!("data:{};base64,{}", mime_type, base64_cover);
+
+        let image_type: ImageType = match visual.usage {
             Some(StandardVisualKey::FrontCover) => ImageType::CoverFront,
             Some(StandardVisualKey::BackCover) => ImageType::CoverBack,
             Some(StandardVisualKey::Leaflet) => ImageType::LeafletPage,
             Some(StandardVisualKey::Media) => ImageType::MediaLabel,
-            Some(StandardVisualKey::ArtistPerformer) => ImageType::Artist,
+            Some(StandardVisualKey::ArtistPerformer)
+            | Some(StandardVisualKey::LeadArtistPerformerSoloist)
+            | Some(StandardVisualKey::BandOrchestra) => ImageType::Artist,
             Some(StandardVisualKey::Conductor) => ImageType::Conductor,
             Some(StandardVisualKey::Composer) => ImageType::Composer,
             Some(StandardVisualKey::Lyricist) => ImageType::LyricistTextWriter,
@@ -320,18 +321,19 @@ impl AudioAnalyser {
             Some(StandardVisualKey::Performance) => ImageType::DuringPerformance,
             Some(StandardVisualKey::ScreenCapture) => ImageType::MovieVideoScreenCapture,
             Some(StandardVisualKey::Illustration) => ImageType::Illustration,
-            Some(StandardVisualKey::PublisherStudioLogo) => ImageType::PublisherStudioLogo,
+            Some(StandardVisualKey::PublisherStudioLogo)
+            | Some(StandardVisualKey::BandArtistLogo) => ImageType::PublisherStudioLogo,
             _ => ImageType::Other,
         };
 
         let attached_image: AttachedImage = AttachedImage {
             image_type: Some(image_type),
-            mime_type: visual.media_type.clone(),
+            mime_type,
             description: visual
                 .tags
                 .iter()
-                .find(|t| t.key == "description")
-                .map(|t| t.value.to_string()),
+                .find(|t| t.raw.key.eq_ignore_ascii_case("description"))
+                .map(|t| t.raw.value.to_string()),
             image_data: visual.data.to_vec(),
             image_src,
         };

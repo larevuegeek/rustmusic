@@ -24,7 +24,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
-tauri = { version = "2.11.4", features = ["protocol-asset", "tray-icon"] }
+tauri = { version = "2.11.5", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-opener = "2.5.4"
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-sql = { version = "2.4.0", features = ["sqlite"] }
@@ -36,16 +36,19 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.150"
 base64 = "0.22.1"
 cpal = "0.18.1"
-symphonia = { version = "0.5.5", features = ["default", "mp3", "flac", "wav", "vorbis", "aac"] }
-rubato = "2.0.0"
+# 0.6 : flac/wav/vorbis/pcm sont dans les features par défaut ; isomp4 ajoute
+# le conteneur MP4/M4A (sans lui le codec AAC ne sert à rien en pratique).
+symphonia = { version = "0.6.0", features = ["mp3", "flac", "wav", "vorbis", "aac", "isomp4"] }
+rubato = "3.0.0"
 lazy_static = "1.5.0"
 log = "0.4.33"
 simplelog = "0.12"
 rb = "0.4.1"
-arrayvec = "0.7.7"
+arrayvec = "0.7.8"
 num-traits = "0.2.19"
-anyhow = "1.0.100"
-md5 = "0.8.0"
+anyhow = "1.0.103"
+md5 = "0.8.1"
+# NB: rester aligné sur la version qu'utilise rubato (4.0 existe mais rubato 3 attend les traits 3.x)
 audioadapter-buffers = "3.0.0"
 sqlx = { version = "0.8.6", features = [
     "runtime-tokio",      # Runtime async
@@ -59,7 +62,7 @@ uuid = { version = "1.23.4", features = ["v4", "serde"] }
 unidecode = "0.3.0"
 chrono = { version = "0.4.45", features = ["serde"] }
 ringbuf = "0.5.0"
-regex = "1.12.4"
+regex = "1.13.0"
 rayon = "1.12.0"
 reqwest = { version = "0.13.4", features = ["json"] }
 urlencoding = "2"

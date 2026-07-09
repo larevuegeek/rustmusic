@@ -75,17 +75,17 @@ pub fn dsd_label(rate: u32) -> String {
 }
 
 /// Best-effort label for a Symphonia codec id.
-pub fn symphonia_format_label(codec: symphonia::core::codecs::CodecType) -> &'static str {
-    use symphonia::core::codecs;
+pub fn symphonia_format_label(codec: symphonia::core::codecs::audio::AudioCodecId) -> &'static str {
+    use symphonia::core::codecs::audio::well_known as ids;
     match codec {
-        c if c == codecs::CODEC_TYPE_MP3 => "MP3",
-        c if c == codecs::CODEC_TYPE_FLAC => "FLAC",
-        c if c == codecs::CODEC_TYPE_VORBIS => "OGG Vorbis",
-        c if c == codecs::CODEC_TYPE_OPUS => "Opus",
-        c if c == codecs::CODEC_TYPE_AAC => "AAC",
-        c if c == codecs::CODEC_TYPE_PCM_S16LE
-            || c == codecs::CODEC_TYPE_PCM_S24LE
-            || c == codecs::CODEC_TYPE_PCM_F32LE =>
+        c if c == ids::CODEC_ID_MP3 => "MP3",
+        c if c == ids::CODEC_ID_FLAC => "FLAC",
+        c if c == ids::CODEC_ID_VORBIS => "OGG Vorbis",
+        c if c == ids::CODEC_ID_OPUS => "Opus",
+        c if c == ids::CODEC_ID_AAC => "AAC",
+        c if c == ids::CODEC_ID_PCM_S16LE
+            || c == ids::CODEC_ID_PCM_S24LE
+            || c == ids::CODEC_ID_PCM_F32LE =>
         {
             "WAV (PCM)"
         }

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import Icon from "@iconify/svelte";
   import { settingsStore } from "$lib/stores/settings/settings.store";
+  import { toggleMiniPlayer } from "$lib/stores/ui/miniPlayer.store";
   import { t } from "$lib/i18n";
   import { detectOS } from "$lib/helper/tools/osDetection";
 
@@ -38,6 +40,28 @@
   }
 </script>
 
+<!-- Bouton mini-lecteur : action de fenêtre (always-on-top compact), donc
+     rangé avec les contrôles de fenêtre. Toujours côté "intérieur" du groupe
+     (order-first quand les contrôles sont à droite, order-last à gauche)
+     pour laisser les 3 contrôles standards contre le coin de la fenêtre. -->
+{#snippet miniPlayerButton(style: 'macos' | 'windows' | 'linux')}
+  <button
+    class="cursor-pointer transition-colors
+           {style === 'windows'
+             ? 'flex items-center justify-center w-11 h-full text-neutral-500 dark:text-neutral-400 hover:bg-neutral-200/60 dark:hover:bg-white/8 hover:text-neutral-700 dark:hover:text-neutral-200'
+             : style === 'linux'
+               ? 'flex items-center justify-center w-6 h-6 rounded-full bg-neutral-200 dark:bg-white/10 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-300 dark:hover:bg-white/20'
+               : 'flex items-center justify-center w-5 h-5 text-neutral-400 dark:text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-200'}"
+    class:order-first={effectivePosition === 'right'}
+    class:order-last={effectivePosition === 'left'}
+    onclick={() => toggleMiniPlayer()}
+    aria-label={$t('mini.enter')}
+    title={$t('mini.enter')}
+  >
+    <Icon icon="lucide:picture-in-picture-2" width={style === 'linux' ? 11 : 13} height={style === 'linux' ? 11 : 13} />
+  </button>
+{/snippet}
+
 <div
   data-tauri-drag-region
   role="toolbar"
@@ -63,6 +87,7 @@
       class:ml-auto={effectivePosition === 'right'}
       class:order-first={effectivePosition === 'left'}
     >
+      {@render miniPlayerButton('macos')}
       <button
         class="w-3 h-3 rounded-full bg-[#febc2e] opacity-70 hover:opacity-100
                transition-opacity cursor-pointer"
@@ -90,6 +115,7 @@
       class:ml-auto={effectivePosition === 'right'}
       class:order-first={effectivePosition === 'left'}
     >
+      {@render miniPlayerButton('linux')}
       <!-- Minimize -->
       <button
         class="flex items-center justify-center w-6 h-6 rounded-full cursor-pointer
@@ -150,6 +176,7 @@
       class:ml-auto={effectivePosition === 'right'}
       class:order-first={effectivePosition === 'left'}
     >
+      {@render miniPlayerButton('windows')}
       <!-- Minimize -->
       <button
         class="flex items-center justify-center w-11 h-full cursor-pointer
