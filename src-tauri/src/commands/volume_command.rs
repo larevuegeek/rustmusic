@@ -1,7 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait};
 
 use crate::commands::player_command::AUDIO_PLAYER;
-use crate::core::settings_manager::settings_manager::{Config, SettingsManager};
+use crate::core::settings_manager::settings_manager::SettingsManager;
 
 #[cfg(target_os = "linux")]
 fn is_alsa_virtual_device(name: &str) -> bool {
@@ -78,7 +78,11 @@ pub async fn get_devices() -> Result<Vec<String>, String> {
         };
         let raw_name = desc.name().to_string();
 
-        if is_alsa_virtual_device(&raw_name) {
+        // Filtre ALSA : tester le nom brut ET le driver (le discriminant
+        // virtuel hw:/plughw:/surround/iec958/… est dans le champ `driver`).
+        if is_alsa_virtual_device(&raw_name)
+            || desc.driver().map(is_alsa_virtual_device).unwrap_or(false)
+        {
             continue;
         }
 
@@ -93,10 +97,14 @@ pub async fn get_devices() -> Result<Vec<String>, String> {
         }
     }
 
-    let config: Result<Config, std::io::Error> = SettingsManager::load_config();
-    if let Ok(mut config) = config {
-        config.device_default = devices_names.first().cloned();
-        let _ = SettingsManager::save_config(&config);
+    // N'initialise `device_default` que s'il est vide (1er lancement) — ne
+    // JAMAIS écraser une sélection utilisateur persistée (sinon on la perd à
+    // chaque ouverture de la liste des périphériques).
+    if let Ok(mut config) = SettingsManager::load_config() {
+        if config.device_default.is_none() {
+            config.device_default = devices_names.first().cloned();
+            let _ = SettingsManager::save_config(&config);
+        }
     }
 
     Ok(devices_names)
@@ -109,5 +117,13 @@ pub async fn set_device(device_name: Option<String>) {
             player.set_device(device_name.clone());
             log::info!("Device sélectionné : {:?}", device_name);
         }
+    }
+
+    // Persister la sélection pour la restaurer au prochain démarrage
+    // (indispensable au DoP : sinon le device revient à "défaut" et
+    // `resolve_hw_id` échoue → plus de DSD natif silencieusement).
+    if let Ok(mut config) = SettingsManager::load_config() {
+        config.device_default = device_name;
+        let _ = SettingsManager::save_config(&config);
     }
 }

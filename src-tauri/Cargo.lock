@@ -4847,6 +4847,7 @@ dependencies = [
 name = "rustmusic"
 version = "0.1.9"
 dependencies = [
+ "alsa",
  "anyhow",
  "arrayvec",
  "async-trait",
@@ -4892,6 +4893,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "wasapi",
+ "zbus",
 ]
 
 [[package]]

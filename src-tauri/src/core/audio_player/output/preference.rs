@@ -21,11 +21,12 @@ static DSD_DOP: AtomicBool = AtomicBool::new(false);
 /// DSD2PCM) dépend AUSSI de WASAPI exclusive actif + compat DAC, vérifiée
 /// au moment de la lecture.
 pub fn dop_enabled() -> bool {
-    #[cfg(target_os = "windows")]
+    // Windows : DoP via WASAPI exclusive. Linux : DoP via ALSA hw exclusif.
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         return DSD_DOP.load(Ordering::Relaxed);
     }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         false
     }

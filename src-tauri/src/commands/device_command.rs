@@ -121,14 +121,21 @@ fn describe_device(
     // CPAL 0.18 : `Device::name()` supprimé → tout passe par `description()`.
     let desc = device.description().ok()?;
     let raw_name = desc.name().to_string();
-    if is_alsa_virtual_device(&raw_name) {
+    let drv = desc.driver().map(str::to_string);
+
+    // Filtre ALSA : le nom brut est identique pour tous les alias d'une même
+    // carte (ex. "Fosi Audio K7, USB Audio"), le discriminant virtuel
+    // (hw:/plughw:/surround/iec958/sysdefault…) est dans le champ `driver`.
+    // On teste donc les DEUX, sinon la liste explose en doublons ALSA.
+    if is_alsa_virtual_device(&raw_name)
+        || drv.as_deref().map(is_alsa_virtual_device).unwrap_or(false)
+    {
         return None;
     }
 
     let (display_name, manufacturer, driver) = {
         let name = raw_name.clone();
         let mfr = desc.manufacturer().map(str::to_string);
-        let drv = desc.driver().map(str::to_string);
         let disp = match (&mfr, &drv) {
             (Some(m), _) => format!("{} ({})", name, m),
             (_, Some(d)) => format!("{} ({})", name, d),

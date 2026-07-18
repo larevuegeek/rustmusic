@@ -22,6 +22,10 @@ mod types;
 mod wasapi_exclusive;
 #[cfg(target_os = "windows")]
 pub mod dop_engine;
+#[cfg(target_os = "linux")]
+pub mod dop_alsa;
+#[cfg(target_os = "linux")]
+pub mod device_reservation;
 
 pub use preference::{current_preference, dop_enabled, set_dop_enabled, set_wasapi_exclusive};
 pub use traits::{AudioOutput, AudioOutputError};

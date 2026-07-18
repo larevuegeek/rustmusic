@@ -982,6 +982,103 @@ impl AudioPlayer {
             }
         }
 
+        // ─── Décision DSD natif (DoP) — Linux via ALSA hw exclusif ───
+        // DoP si : préférence activée + profil non Minimal + le device
+        // sélectionné mappe vers un `hw:` ALSA qui accepte S32_LE @ carrier en
+        // accès exclusif. Sinon on continue sur le chemin DSD2PCM classique.
+        #[cfg(target_os = "linux")]
+        {
+            use crate::core::audio_player::output;
+            let profile_dop = crate::core::audio_quality::current_profile();
+            let is_minimal = matches!(
+                profile_dop,
+                crate::core::audio_quality::AudioQualityProfile::Minimal
+            );
+            if output::dop_enabled() && !is_minimal {
+                let carrier = crate::core::audio_decoder::dsd::dop_encoder::dop_carrier_rate(dsd_rate);
+                let device_full_name = device
+                    .description()
+                    .ok()
+                    .map(|d| {
+                        let name = d.name().to_string();
+                        match (d.manufacturer(), d.driver()) {
+                            (Some(mfr), _) => format!("{} ({})", name, mfr),
+                            (_, Some(drv)) => format!("{} ({})", name, drv),
+                            _ => name,
+                        }
+                    })
+                    .unwrap_or_else(|| "Périphérique audio".to_string());
+
+                // Résoudre le hw: ALSA : le choix EXPLICITE de l'utilisateur
+                // (selected_device_name) d'abord — car `device_full_name` peut
+                // avoir défauté sur un autre périphérique si le lookup CPAL a
+                // échoué (→ résoudrait la mauvaise carte).
+                let hw_id = selected_device_name
+                    .as_deref()
+                    .and_then(output::dop_alsa::resolve_hw_id)
+                    .or_else(|| output::dop_alsa::resolve_hw_id(&device_full_name));
+
+                if let Some(hw_id) = hw_id {
+                    // Réserver la carte via D-Bus AVANT la probe : PipeWire/Pulse
+                    // relâche le `hw:` (sinon ouverture exclusive = EBUSY). La
+                    // réservation est gardée vivante pendant toute la lecture et
+                    // relâchée à la fin (→ PipeWire reprend la carte).
+                    let reservation = output::device_reservation::card_index_from_hw_id(&hw_id)
+                        .and_then(|idx| {
+                            match output::device_reservation::DeviceReservation::acquire(idx) {
+                                Ok(r) => Some(r),
+                                Err(e) => {
+                                    log::warn!("🔒 Réservation carte {idx} échouée ({e}) — tentative sans");
+                                    None
+                                }
+                            }
+                        });
+
+                    if output::dop_alsa::dop_format_supported(&hw_id, carrier, channel_count as u16) {
+                        log::info!(
+                            "🎚️  DSD natif (DoP) ALSA activé : {} → porteur {} Hz sur '{}' ({})",
+                            crate::core::audio_player::pipeline_info::dsd_label(dsd_rate),
+                            carrier,
+                            device_full_name,
+                            hw_id
+                        );
+                        let lsb_first = ext == "dsf";
+                        return Self::run_dsd_dop_alsa_thread(
+                            app_handle,
+                            decoder,
+                            file_path,
+                            lsb_first,
+                            dsd_rate,
+                            channel_count,
+                            carrier,
+                            hw_id,
+                            device_full_name,
+                            duration,
+                            is_paused,
+                            is_playing,
+                            is_stopped,
+                            is_stream_alive,
+                            current_position,
+                            total_duration,
+                            seek_position,
+                            reservation,
+                        );
+                    } else {
+                        log::warn!(
+                            "🎚️  DoP ALSA non supporté au porteur {} Hz (device occupé ou format refusé), fallback DSD2PCM",
+                            carrier
+                        );
+                        // `reservation` est droppée ici → PipeWire reprend la carte.
+                    }
+                } else {
+                    log::debug!(
+                        "🎚️  Aucun hw: ALSA résolu pour '{}', fallback DSD2PCM",
+                        device_full_name
+                    );
+                }
+            }
+        }
+
         // On ne joue PAS ce DSD en DoP (toggle off, format non supporté, ou
         // Minimal) → fermer un éventuel moteur DoP vivant (le DAC repasse en PCM).
         #[cfg(target_os = "windows")]
@@ -1593,6 +1690,111 @@ impl AudioPlayer {
         is_playing.store(false, Ordering::SeqCst);
         current_position.store(0.0_f64.to_bits(), Ordering::Relaxed);
 
+        Ok(())
+    }
+
+    /// Thread de lecture DSD natif (DoP) via ALSA hw exclusif — Linux, per-track.
+    ///
+    /// Décode les octets DSD → encode en trames DoP → écrit verbatim au DAC via
+    /// ALSA `hw:` (bit-perfect, aucun resampling ni conversion PCM, volume
+    /// logiciel inopérant). Bloquant jusqu'à EOF ou stop utilisateur.
+    #[cfg(target_os = "linux")]
+    #[allow(clippy::too_many_arguments)]
+    fn run_dsd_dop_alsa_thread(
+        app_handle: AppHandle,
+        decoder: Box<dyn DsdContainerReader + Send>,
+        file_path: PathBuf,
+        lsb_first: bool,
+        dsd_rate: u32,
+        channel_count: u8,
+        carrier_rate: u32,
+        hw_id: String,
+        device_full_name: String,
+        duration: f64,
+        is_paused: Arc<AtomicBool>,
+        is_playing: Arc<AtomicBool>,
+        is_stopped: Arc<AtomicBool>,
+        is_stream_alive: Arc<AtomicBool>,
+        current_position: Arc<AtomicU64>,
+        total_duration: Arc<AtomicU64>,
+        seek_position: Arc<AtomicU64>,
+        // Réservation D-Bus de la carte (PipeWire l'a relâchée). Gardée vivante
+        // pendant toute la lecture ; droppée au retour → PipeWire reprend la carte.
+        reservation: Option<crate::core::audio_player::output::device_reservation::DeviceReservation>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::core::audio_player::output::dop_alsa::{
+            run_alsa_dop_playback, AlsaDopControl,
+        };
+
+        let _reservation = reservation; // maintient la carte réservée jusqu'à la fin
+        let _ = duration; // (position dérivée des frames écrites, pas de la durée)
+        let profile = crate::core::audio_quality::current_profile();
+
+        // ─── Pipeline info (DoP ALSA) ───
+        crate::core::audio_player::pipeline_info::PlaybackPipelineInfo {
+            source_format: crate::core::audio_player::pipeline_info::dsd_label(dsd_rate),
+            source_sample_rate: dsd_rate,
+            source_bits: 1,
+            source_channels: channel_count,
+            intermediate_pcm_rate: None,
+            dsd_filter_taps: None,
+            dsd_decimation: None,
+            output_sample_rate: carrier_rate,
+            output_channels: channel_count,
+            device_name: device_full_name.clone(),
+            resampler_active: false,
+            quality_profile: format!("{:?}", profile).to_lowercase(),
+            backend: "ALSA DoP".to_string(),
+            bit_perfect: true,
+        }
+        .emit(&app_handle);
+
+        // Le DAC peut se muter ~1-2 s le temps d'acquérir le lock DSD.
+        let _ = app_handle.emit("playback-preparing", false);
+        is_playing.store(true, Ordering::SeqCst);
+        is_stream_alive.store(true, Ordering::SeqCst);
+
+        let ctl = AlsaDopControl {
+            is_paused,
+            is_stopped: is_stopped.clone(),
+            current_position: current_position.clone(),
+            seek_position,
+            total_duration,
+        };
+
+        let result = run_alsa_dop_playback(
+            &hw_id,
+            carrier_rate,
+            channel_count as u16,
+            decoder,
+            lsb_first,
+            ctl,
+        );
+
+        is_stream_alive.store(false, Ordering::SeqCst);
+
+        let natural_end = match result {
+            Ok(natural) => natural,
+            Err(e) => {
+                log::error!("❌ [DoP ALSA] {e}");
+                false
+            }
+        };
+
+        // playback-ended seulement sur fin naturelle (→ le frontend enchaîne).
+        if natural_end {
+            if let Err(e) =
+                app_handle.emit("playback-ended", file_path.to_string_lossy().to_string())
+            {
+                log::error!("❌ Erreur d'envoi de l'event Tauri : {}", e);
+            }
+        }
+
+        is_stopped.store(false, Ordering::SeqCst);
+        is_playing.store(false, Ordering::SeqCst);
+        current_position.store(0.0_f64.to_bits(), Ordering::Relaxed);
+
+        log::debug!("✅ [DoP ALSA] Fin de piste (natural_end={natural_end})");
         Ok(())
     }
 }

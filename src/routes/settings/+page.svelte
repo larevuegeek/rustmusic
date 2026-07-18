@@ -212,6 +212,7 @@
   let wasapiExclusive = $derived($settingsStore.wasapi_exclusive === 'true');
   let dsdDop = $derived($settingsStore.dsd_dop === 'true');
   let isWindows = $derived(detectOS() === 'windows');
+  let isLinux = $derived(detectOS() === 'linux');
 
   // ─── Test WASAPI ──────────────────────────────────────────────────────
   // Bouton "Tester" qui exécute la cascade de format negotiation pour les
@@ -952,6 +953,46 @@
                   Vérifie quels sample rates ton DAC supporte en mode exclusive.
                 </p>
               {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      <!-- ── DSD natif (DoP) — Linux (ALSA hw exclusif, sans WASAPI) ── -->
+      {#if isLinux}
+        <div class="mt-8 mb-2 rounded-2xl border border-neutral-200/70 dark:border-white/8
+                    bg-neutral-50/40 dark:bg-white/2 overflow-hidden">
+          <div class="flex items-center gap-3.5 px-4 py-3.5">
+            <div class="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center
+                        {dsdDop ? 'bg-purple-500/15 text-purple-500 dark:text-purple-400' : 'bg-neutral-200/60 dark:bg-white/5 text-neutral-400'}">
+              <Icon icon="lucide:badge-check" width="18" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-neutral-800 dark:text-neutral-200 flex items-center gap-1.5">
+                {$t('settings.dsd_dop')}
+                <span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/20 uppercase tracking-wider">Beta</span>
+              </p>
+              <p class="text-[11px] text-neutral-400 dark:text-neutral-500 mt-0.5">
+                {$t('settings.dsd_dop_desc')}
+              </p>
+            </div>
+            <button
+              class="relative w-10 h-6 rounded-full cursor-pointer transition-colors duration-200 shrink-0
+                     {dsdDop ? 'bg-purple-500' : 'bg-neutral-300 dark:bg-neutral-700'}"
+              aria-label="DSD natif DoP"
+              onclick={() => settingsStore.toggle('dsd_dop')}
+            >
+              <div class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200
+                          {dsdDop ? 'translate-x-4' : ''}"></div>
+            </button>
+          </div>
+
+          {#if dsdDop}
+            <div class="px-4 pb-3.5 -mt-1">
+              <p class="flex items-start gap-1.5 text-[10.5px] text-purple-600/90 dark:text-purple-300/75 leading-relaxed">
+                <Icon icon="lucide:info" width="12" class="shrink-0 mt-0.5" />
+                <span>{$t('settings.dsd_dop_warning')}</span>
+              </p>
             </div>
           {/if}
         </div>

@@ -165,9 +165,12 @@ pub async fn run() {
 
     let audio_player = AudioPlayer::new();
 
-    // Restaurer le volume depuis la config sauvegardée
+    // Restaurer le volume ET le périphérique sélectionné depuis la config.
+    // Le device DOIT être restauré pour que le DoP retrouve le bon `hw:` ALSA
+    // au 1er morceau (sinon fallback DSD2PCM).
     if let Ok(config) = crate::core::settings_manager::settings_manager::SettingsManager::load_config() {
         audio_player.set_volume(config.volume_initial);
+        audio_player.set_device(config.device_default);
     }
 
     AUDIO_PLAYER
